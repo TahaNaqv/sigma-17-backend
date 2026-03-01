@@ -143,3 +143,37 @@ class PermissionCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
         fields = ["id", "name", "key", "module", "description"]
+
+
+class ProfileSerializer(serializers.Serializer):
+    """Read/write profile (name, email) for current user."""
+    name = serializers.CharField(max_length=255, required=False)
+    email = serializers.EmailField(required=False)
+
+    def to_representation(self, instance):
+        parts = [instance.first_name, instance.last_name]
+        name = " ".join(p for p in parts if p).strip() or instance.username
+        return {"name": name, "email": instance.email}
+
+    def update(self, instance, validated_data):
+        name = validated_data.get("name")
+        if name is not None:
+            parts = name.strip().split(None, 1)
+            instance.first_name = parts[0] if parts else ""
+            instance.last_name = parts[1] if len(parts) > 1 else ""
+        if "email" in validated_data:
+            instance.email = validated_data["email"]
+            instance.username = validated_data["email"]
+        instance.save()
+        return instance
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    currentPassword = serializers.CharField(write_only=True)
+    newPassword = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_currentPassword(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value

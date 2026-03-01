@@ -21,7 +21,9 @@ RUN poetry config virtualenvs.create false \
 
 COPY . .
 
+# Collect static files
+RUN python manage.py collectstatic --noinput --settings=config.settings 2>/dev/null || true
+
 EXPOSE 8000
 
-# CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]

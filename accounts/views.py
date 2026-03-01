@@ -8,8 +8,10 @@ from rest_framework.viewsets import ModelViewSet
 from .models import Permission, Role, UserProfile
 from .permissions import HasPermission, get_user_permission_keys
 from .serializers import (
+    ChangePasswordSerializer,
     PermissionCreateUpdateSerializer,
     PermissionSerializer,
+    ProfileSerializer,
     RoleSerializer,
     UserCreateUpdateSerializer,
     UserListSerializer,
@@ -46,6 +48,31 @@ def auth_me(request):
     })
 
 
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def profile(request):
+    """Get or update current user profile (name, email)."""
+    user = request.user
+    if request.method == "GET":
+        serializer = ProfileSerializer(user)
+        return Response(serializer.data)
+    serializer = ProfileSerializer(user, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def change_password(request):
+    """Change current user password."""
+    serializer = ChangePasswordSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    request.user.set_password(serializer.validated_data["newPassword"])
+    request.user.save()
+    return Response({"detail": "Password changed successfully."})
+
+
 class UserViewSet(ModelViewSet):
     queryset = User.objects.all().order_by("id")
     permission_classes = [IsAuthenticated]
@@ -57,7 +84,7 @@ class UserViewSet(ModelViewSet):
         return UserListSerializer
 
     def get_permissions(self):
-        base = [IsAuthenticated]
+        base = [IsAuthenticated()]
         if self.action in ("list", "retrieve"):
             return base + [HasPermission(["users.view"])]
         if self.action == "create":
@@ -93,7 +120,7 @@ class RoleViewSet(ModelViewSet):
     lookup_url_kwarg = "id"
 
     def get_permissions(self):
-        base = [IsAuthenticated]
+        base = [IsAuthenticated()]
         if self.action in ("list", "retrieve"):
             return base + [HasPermission(["roles.view"])]
         if self.action == "create":
@@ -107,8 +134,11 @@ class RoleViewSet(ModelViewSet):
 
 class PermissionViewSet(ModelViewSet):
     queryset = Permission.objects.all().order_by("id")
-    permission_classes = [IsAuthenticated, HasPermission(["permissions.manage"])]
+    permission_classes = [IsAuthenticated]
     lookup_url_kwarg = "id"
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["permissions.manage"])]
 
     def get_serializer_class(self):
         if self.action in ("create", "update", "partial_update"):
