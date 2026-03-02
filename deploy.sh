@@ -1,7 +1,7 @@
 #!/bin/bash
-# Local deployment script.  Copies .env, updates code on remote, builds and
-# restarts Docker containers, runs migrations/collectstatic and does a
-# health check.  Contains simple rollback logic.
+# Local deployment script.  Copies .env, updates code on the remote host,
+# rebuilds and restarts Docker containers, runs migrations/collectstatic and
+# executes a health check.  Contains a simple rollback mechanism.
 
 set -euo pipefail
 
@@ -33,13 +33,14 @@ fi
 log "copying .env.production → ${REMOTE_DIR}/.env"
 scp .env.production "${SERVER_USER}@${SERVER_HOST}:${REMOTE_DIR}/.env"
 
-ssh "${SERVER_USER}@${SERVER_HOST}" bash <<'REMOTE_EOF'
+ssh "${SERVER_USER}@${SERVER_HOST}" "BRANCH=${BRANCH} bash -s" <<'REMOTE_EOF'
 set -euo pipefail
+
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 log(){ echo -e "${GREEN}[server]${NC} $1"; }
 err(){ echo -e "${RED}[server]${NC} $1"; exit 1; }
 
-cd ~/sigma17 || mkdir -p ~/sigma17 && cd ~/sigma17
+cd ~/sigma17 || (mkdir -p ~/sigma17 && cd ~/sigma17)
 if [ ! -d "sigma-17-backend/.git" ]; then
     log "cloning repository"
     git clone "$REPO_URL" sigma-17-backend
@@ -49,6 +50,7 @@ cd sigma-17-backend
 rollback() {
     err "rolling back to ${PREV_HASH}"
     git reset --hard "$PREV_HASH"
+    docker-compose down || true
     docker-compose build web
     docker-compose up -d
     exit 1
@@ -59,7 +61,6 @@ log "previous commit: $PREV_HASH"
 
 log "fetching and resetting ${BRANCH}"
 git fetch origin
-
 git checkout "$BRANCH" || rollback
 git reset --hard "origin/$BRANCH" || rollback
 
@@ -69,11 +70,17 @@ if ! docker-compose build web; then
     rollback
 fi
 
+log "cleaning up old containers and volumes"
+docker-compose down || true
+
 log "starting containers"
 if ! docker-compose up -d; then
     err "docker-compose up failed"
     rollback
 fi
+
+log "waiting for database to be ready"
+sleep 5
 
 log "applying migrations"
 docker-compose exec -T web python manage.py migrate --noinput
