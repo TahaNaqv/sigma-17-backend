@@ -70,7 +70,7 @@ if ! docker-compose build web; then
     rollback
 fi
 
-log "cleaning up old containers"
+log "cleaning up old containers (keeping database)"
 docker-compose down || true
 
 log "starting containers"
