@@ -30,7 +30,7 @@ SECRET_KEY = env('SECRET_KEY', default='django-insecure--xoxe4!yky(^&#d$$w8=m&c$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool('DEBUG', default=False)
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1', '0.0.0.0', 'api.sigma17.leadrisks.com', "sigma17.netlify.app"])
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1', '0.0.0.0', 'api.sigma17.leadrisks.com', "sigma17.netlify.app", "sigma17.vercel.app"])
 
 # Application definition
 
@@ -171,6 +171,7 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     'https://sigma17.leadrisks.com',
     "https://www.sigma17.leadrisks.com",
     "https://sigma17.netlify.app", 
+    "https://sigma17.vercel.app",
 ])
 
 # Security settings for production
