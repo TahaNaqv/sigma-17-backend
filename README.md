@@ -12,9 +12,11 @@ Django REST API backend for the Sigma 17 actuarial calculation engine. Provides 
 
 ```
 sigma-17-backend/
-├── config/           # Django project settings
+├── config/           # Django project settings (includes Celery app)
 ├── accounts/         # Auth, users, roles, permissions (RBAC)
 ├── core/             # Core views (health, registration)
+├── processing/       # Module 1 background jobs (Celery), ZIP downloads
+├── module1_engine/   # Headless Excel pipeline; `uw_patch.py` applies UW/ULAE/Discount to Combined_Summary
 ├── manage.py
 ├── pyproject.toml    # Dependencies (Poetry)
 ├── .env.example      # Environment template
@@ -113,7 +115,7 @@ API base URL: **http://127.0.0.1:8000**
 
 ## Run with Docker Compose
 
-Starts PostgreSQL and the Django app:
+Starts PostgreSQL, **Redis**, the Django app, and a **Celery worker** (required for Module 1 jobs):
 
 ```bash
 docker compose up --build
@@ -121,6 +123,23 @@ docker compose up --build
 
 - **API:** http://localhost:8000
 - **PostgreSQL:** localhost:5432
+- **Redis:** localhost:6379
+- **Celery:** worker container `sigma17-celery` (processes `processing.tasks`)
+
+---
+
+## Module 1 (Celery + Redis)
+
+Long-running Excel jobs are queued to Celery. With Docker Compose, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` default to `redis://redis:6379/0`.
+
+**Local development (without Docker for workers):**
+
+1. Start Redis (e.g. `docker run -p 6379:6379 redis:7-alpine`).
+2. Set in `.env`: `CELERY_BROKER_URL=redis://localhost:6379/0` and `CELERY_RESULT_BACKEND=redis://localhost:6379/0`.
+3. Run Django: `python manage.py runserver`
+4. In another terminal: `celery -A config worker -l info`
+
+Upload limits (optional env): `MODULE1_MAX_UPLOAD_FILES`, `MODULE1_MAX_UPLOAD_MB`.
 
 To run only the database:
 
@@ -150,7 +169,8 @@ python manage.py runserver
 | `python manage.py seed_rbac --force` | Force-update role permissions |
 | `python manage.py wait_for_db` | Wait until PostgreSQL is ready |
 | `python manage.py shell` | Django shell |
-| `python manage.py test` | Run tests |
+| `python manage.py test` | Run tests (includes `processing.tests` for API tests) |
+| `pytest` | Run `module1_engine` unit tests (from repo root / backend) |
 
 ---
 
@@ -173,6 +193,20 @@ python manage.py runserver
 | `GET` | `/api/roles/` | List roles |
 | `GET` | `/api/permissions/` | List permissions |
 | `GET` | `/admin/` | Django admin |
+| `GET` | `/api/module1/jobs/` | List Module 1 jobs (`runhistory.view`) |
+| `POST` | `/api/module1/jobs/summary/` | Start summary job — multipart (`module1.run`) |
+| `POST` | `/api/module1/jobs/policy-upr/` | Start policy UPR job (`module1.run`) |
+| `POST` | `/api/module1/jobs/update-reserve/` | Start update-reserve job (`module1.run`) |
+| `GET` | `/api/module1/jobs/{uuid}/` | Job status (`module1.run` or `outputs.download` or `runhistory.view`; own jobs) |
+| `GET` | `/api/module1/jobs/{uuid}/download/` | ZIP download when successful (same permissions) |
+| `POST` | `/api/module1/combined-summary/uw-preview/` | Multipart `combined_summary` — returns JSON templates for Exp Ratio, ULAE-RA, Discount rows (`module1.run`) |
+| `POST` | `/api/module1/jobs/uw-parameters/` | Multipart `combined_summary` + form field `payload` (JSON string with `exp_ratio`, `ulae_ra`, `discount`) — Celery job; ZIP contains updated `Combined_Summary.xlsx` (`module1.run`) |
+
+**`payload` JSON shape (snake_case):**
+
+- `exp_ratio`: `[{ "reserving_class", "uwy", "exp_ratio", "ri_percent" }]`
+- `ulae_ra`: `[{ "reserving_class", "gross_ri": "GROSS" \| "RI", "ulae_percent", "ra_percent" }]`
+- `discount`: `[{ "time_period", "cy_discount", "py_discount" }]`
 
 ---
 
@@ -203,6 +237,10 @@ Authorization: Bearer <access_token>
 | `DEBUG` | `True` | Debug mode; **False in production** |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1,0.0.0.0` | Allowed hosts (comma-separated) |
 | `CORS_ALLOW_ALL_ORIGINS` | `True` (when DEBUG) | Allow all CORS origins; restrict in production |
+| `CELERY_BROKER_URL` | `redis://localhost:6379/0` | Celery broker (Redis) |
+| `CELERY_RESULT_BACKEND` | `redis://localhost:6379/0` | Celery result backend |
+| `MODULE1_MAX_UPLOAD_FILES` | `50` | Max uploaded files per job |
+| `MODULE1_MAX_UPLOAD_MB` | `200` | Max total upload size per job |
 
 ---
 

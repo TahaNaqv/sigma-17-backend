@@ -50,9 +50,55 @@ services:
       DB_PORT: 5432
       ALLOWED_HOSTS: ${ALLOWED_HOSTS}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - sigma17-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: sigma17-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - sigma17-network
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sigma17-celery
+    restart: always
+    command: >
+      sh -c "
+        python manage.py wait_for_db &&
+        celery -A config worker -l info
+      "
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+    environment:
+      DEBUG: ${DEBUG}
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      DB_HOST: db
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - sigma17-network
 

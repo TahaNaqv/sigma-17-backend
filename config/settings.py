@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'core',
     'accounts',
+    'processing',
 ]
 
 MIDDLEWARE = [
@@ -147,6 +148,17 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Celery
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 60 * 60  # 1 hour hard limit
+CELERY_TASK_SOFT_TIME_LIMIT = 55 * 60
+
+# Module 1 job uploads (count / size guardrails)
+MODULE1_MAX_UPLOAD_FILES = env.int('MODULE1_MAX_UPLOAD_FILES', default=50)
+MODULE1_MAX_UPLOAD_MB = env.int('MODULE1_MAX_UPLOAD_MB', default=200)
 
 # Django REST Framework
 REST_FRAMEWORK = {
