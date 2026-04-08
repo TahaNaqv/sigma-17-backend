@@ -199,6 +199,9 @@ python manage.py runserver
 | `POST` | `/api/module1/jobs/update-reserve/` | Start update-reserve job (`module1.run`) |
 | `GET` | `/api/module1/jobs/{uuid}/` | Job status (`module1.run` or `outputs.download` or `runhistory.view`; own jobs) |
 | `GET` | `/api/module1/jobs/{uuid}/download/` | ZIP download when successful (same permissions) |
+| `GET` | `/api/module1/jobs/{uuid}/output/files/` | List previewable output files in ZIP (`.xlsx`) |
+| `GET` | `/api/module1/jobs/{uuid}/output/sheets/?file=...` | List sheets + dimensions for one workbook in ZIP |
+| `GET` | `/api/module1/jobs/{uuid}/output/rows/?file=...&sheet=...&page=1&page_size=50` | Paginated sheet rows for in-app preview |
 | `POST` | `/api/module1/combined-summary/uw-preview/` | Multipart `combined_summary` — returns JSON templates for Exp Ratio, ULAE-RA, Discount rows (`module1.run`) |
 | `POST` | `/api/module1/jobs/uw-parameters/` | Multipart `combined_summary` + form field `payload` (JSON string with `exp_ratio`, `ulae_ra`, `discount`) — Celery job; ZIP contains updated `Combined_Summary.xlsx` (`module1.run`) |
 
@@ -241,6 +244,11 @@ Authorization: Bearer <access_token>
 | `CELERY_RESULT_BACKEND` | `redis://localhost:6379/0` | Celery result backend |
 | `MODULE1_MAX_UPLOAD_FILES` | `50` | Max uploaded files per job |
 | `MODULE1_MAX_UPLOAD_MB` | `200` | Max total upload size per job |
+| `MODULE1_OUTPUT_PREVIEW_DEFAULT_PAGE_SIZE` | `50` | Default sheet preview page size |
+| `MODULE1_OUTPUT_PREVIEW_MAX_PAGE_SIZE` | `200` | Max allowed `page_size` for output preview |
+| `MODULE1_OUTPUT_PREVIEW_MAX_CELLS` | `20000` | Max cells returned in one preview response |
+
+`MODULE1_OUTPUT_PREVIEW_MAX_PAGE_SIZE` limits requested rows per page, while `MODULE1_OUTPUT_PREVIEW_MAX_CELLS` limits total cells returned in a single preview response.
 
 ---
 
@@ -250,3 +258,10 @@ Authorization: Bearer <access_token>
 - For production, use **gunicorn**:  
   `gunicorn config.wsgi:application --bind 0.0.0.0:8000`
 - Set `SECRET_KEY`, `DEBUG=False`, and restrict `ALLOWED_HOSTS` and CORS in production.
+
+### Module 1 release runbook
+
+- Ensure `python manage.py migrate` has been applied (including `Module1Job` job type updates).
+- Ensure Redis and a Celery worker are running; Module 1 jobs are asynchronous and will not complete without workers.
+- Seed RBAC (`python manage.py seed_rbac`) and verify users have `module1.run` and/or `runhistory.view`/`outputs.download` as intended.
+- Keep `MODULE1_OUTPUT_PREVIEW_MAX_PAGE_SIZE` and `MODULE1_OUTPUT_PREVIEW_MAX_CELLS` tuned for your workload; very large sheets may require lower limits.

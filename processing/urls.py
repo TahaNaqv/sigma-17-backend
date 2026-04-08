@@ -14,4 +14,7 @@ urlpatterns = [
     path("module1/jobs/uw-parameters/", views.Module1UwParametersJobView.as_view()),
     path("module1/jobs/<uuid:pk>/", views.Module1JobDetailView.as_view()),
     path("module1/jobs/<uuid:pk>/download/", views.Module1JobDownloadView.as_view()),
+    path("module1/jobs/<uuid:pk>/output/files/", views.Module1JobOutputFilesView.as_view()),
+    path("module1/jobs/<uuid:pk>/output/sheets/", views.Module1JobOutputSheetsView.as_view()),
+    path("module1/jobs/<uuid:pk>/output/rows/", views.Module1JobOutputRowsView.as_view()),
 ]

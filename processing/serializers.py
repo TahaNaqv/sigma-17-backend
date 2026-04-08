@@ -30,3 +30,35 @@ class Module1JobSerializer(serializers.ModelSerializer):
 
     def get_output_ready(self, obj: Module1Job) -> bool:
         return obj.status == Module1Job.Status.SUCCESS and bool(obj.output_zip)
+
+
+class OutputFileItemSerializer(serializers.Serializer):
+    path = serializers.CharField()
+    size = serializers.IntegerField(min_value=0)
+    kind = serializers.ChoiceField(choices=["xlsx"])
+
+
+class OutputFilesResponseSerializer(serializers.Serializer):
+    job_id = serializers.UUIDField()
+    files = OutputFileItemSerializer(many=True)
+
+
+class OutputSheetMetaSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    rows = serializers.IntegerField(min_value=0)
+    columns = serializers.IntegerField(min_value=0)
+
+
+class OutputSheetsResponseSerializer(serializers.Serializer):
+    file = serializers.CharField()
+    sheets = OutputSheetMetaSerializer(many=True)
+
+
+class OutputSheetPageResponseSerializer(serializers.Serializer):
+    file = serializers.CharField()
+    sheet = serializers.CharField()
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1)
+    total_rows = serializers.IntegerField(min_value=0)
+    columns = serializers.ListField(child=serializers.CharField())
+    rows = serializers.ListField(child=serializers.ListField())

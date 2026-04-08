@@ -19,8 +19,19 @@ from accounts.permissions import (
 )
 
 from .models import Module1Job
+from .output_preview import (
+    list_preview_files,
+    list_workbook_sheets,
+    parse_page_args,
+    read_sheet_page,
+)
 from .pagination import Module1JobPagination
-from .serializers import Module1JobSerializer
+from .serializers import (
+    Module1JobSerializer,
+    OutputFilesResponseSerializer,
+    OutputSheetPageResponseSerializer,
+    OutputSheetsResponseSerializer,
+)
 from module1_engine.uw_patch import build_default_payload_template_from_workbook
 
 from .tasks import (
@@ -143,11 +154,7 @@ class Module1JobDownloadView(APIView):
     permission_classes = [IsAuthenticated, CanReadModule1Job]
 
     def get(self, request, pk):
-        if user_has_role(request.user, "Super Admin"):
-            qs = Module1Job.objects.all()
-        else:
-            qs = Module1Job.objects.filter(user=request.user)
-        job = get_object_or_404(qs, pk=pk)
+        job = _get_accessible_job(request, pk)
         if job.status != Module1Job.Status.SUCCESS or not job.output_zip:
             raise Http404()
         file_handle = job.output_zip.open("rb")
@@ -156,6 +163,92 @@ class Module1JobDownloadView(APIView):
             as_attachment=True,
             filename=f"module1-{job.id}.zip",
         )
+
+
+def _get_accessible_job(request, pk) -> Module1Job:
+    if user_has_role(request.user, "Super Admin"):
+        qs = Module1Job.objects.all()
+    else:
+        qs = Module1Job.objects.filter(user=request.user)
+    return get_object_or_404(qs, pk=pk)
+
+
+def _open_job_output_zip(job: Module1Job):
+    if job.status != Module1Job.Status.SUCCESS or not job.output_zip:
+        raise Http404()
+    return job.output_zip.open("rb")
+
+
+class Module1JobOutputFilesView(APIView):
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    def get(self, request, pk):
+        job = _get_accessible_job(request, pk)
+        with _open_job_output_zip(job) as f:
+            try:
+                items = list_preview_files(f)
+            except ValueError as exc:
+                raise ValidationError({"detail": str(exc)}) from exc
+        payload = {
+            "job_id": str(job.id),
+            "files": [{"path": x.path, "size": x.size, "kind": x.kind} for x in items],
+        }
+        return Response(OutputFilesResponseSerializer(payload).data)
+
+
+class Module1JobOutputSheetsView(APIView):
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    def get(self, request, pk):
+        file_path = request.query_params.get("file")
+        if not file_path:
+            raise ValidationError({"file": "Query parameter is required."})
+        job = _get_accessible_job(request, pk)
+        with _open_job_output_zip(job) as f:
+            try:
+                sheets = list_workbook_sheets(f, file_path)
+            except ValueError as exc:
+                raise ValidationError({"detail": str(exc)}) from exc
+        payload = {
+            "file": file_path.strip(),
+            "sheets": [{"name": s.name, "rows": s.rows, "columns": s.columns} for s in sheets],
+        }
+        return Response(OutputSheetsResponseSerializer(payload).data)
+
+
+class Module1JobOutputRowsView(APIView):
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    def get(self, request, pk):
+        file_path = request.query_params.get("file")
+        sheet_name = request.query_params.get("sheet")
+        if not file_path:
+            raise ValidationError({"file": "Query parameter is required."})
+        if not sheet_name:
+            raise ValidationError({"sheet": "Query parameter is required."})
+        try:
+            page, page_size = parse_page_args(
+                request.query_params.get("page"),
+                request.query_params.get("page_size"),
+                default_page_size=settings.MODULE1_OUTPUT_PREVIEW_DEFAULT_PAGE_SIZE,
+                max_page_size=settings.MODULE1_OUTPUT_PREVIEW_MAX_PAGE_SIZE,
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        job = _get_accessible_job(request, pk)
+        with _open_job_output_zip(job) as f:
+            try:
+                payload = read_sheet_page(
+                    f,
+                    file_path=file_path,
+                    sheet_name=sheet_name,
+                    page=page,
+                    page_size=page_size,
+                    max_cells=settings.MODULE1_OUTPUT_PREVIEW_MAX_CELLS,
+                )
+            except ValueError as exc:
+                raise ValidationError({"detail": str(exc)}) from exc
+        return Response(OutputSheetPageResponseSerializer(payload).data)
 
 
 class Module1SummaryJobView(APIView):
