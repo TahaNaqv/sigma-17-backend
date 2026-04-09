@@ -308,6 +308,12 @@ Authorization: Bearer <access_token>
 - Verify Module 1 flows remain green
 - Run Module 2 end-to-end: Allocate -> ULR edit/skip -> Process -> Download
 
+## Production operations docs
+
+- Runbook: `PRODUCTION_RUNBOOK.md`
+- Security checklist: `SECURITY_CHECKLIST.md`
+- Performance/SLO notes: `PERFORMANCE_SLO.md`
+
 ### Module 1 release runbook
 
 - Ensure `python manage.py migrate` has been applied (including `Module1Job` job type updates).

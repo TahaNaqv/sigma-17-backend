@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 import environ
 from datetime import timedelta
+import sys
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -200,8 +201,31 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
 
 # Security settings for production
 if not DEBUG:
-    SECURE_SSL_REDIRECT = False  # Let Plesk handle SSL
+    IS_TESTING = "test" in sys.argv
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SESSION_COOKIE_SECURE = False  # Plesk will handle this
-    CSRF_COOKIE_SECURE = False  # Plesk will handle this
+    # Keep these configurable per host/proxy topology.
+    SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not IS_TESTING)
+    SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=True)
+    CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=True)
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=31536000)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool(
+        'SECURE_HSTS_INCLUDE_SUBDOMAINS', default=True
+    )
+    SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD', default=True)
+    SECURE_REFERRER_POLICY = env(
+        'SECURE_REFERRER_POLICY', default='same-origin'
+    )
+    SECURE_CONTENT_TYPE_NOSNIFF = env.bool(
+        'SECURE_CONTENT_TYPE_NOSNIFF', default=True
+    )
+    X_FRAME_OPTIONS = env('X_FRAME_OPTIONS', default='DENY')
+    CSRF_TRUSTED_ORIGINS = env.list(
+        'CSRF_TRUSTED_ORIGINS',
+        default=[
+            'https://sigma17.leadrisks.com',
+            'https://www.sigma17.leadrisks.com',
+            'https://sigma17.netlify.app',
+            'https://sigma17.vercel.app',
+        ],
+    )
 
