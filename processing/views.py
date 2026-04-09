@@ -27,6 +27,8 @@ from .output_preview import (
 )
 from .pagination import Module1JobPagination
 from .serializers import (
+    Module2ProcessRequestSerializer,
+    Module2UlrRowSerializer,
     Module1JobSerializer,
     OutputFilesResponseSerializer,
     OutputSheetPageResponseSerializer,
@@ -35,6 +37,8 @@ from .serializers import (
 from module1_engine.uw_patch import build_default_payload_template_from_workbook
 
 from .tasks import (
+    run_module2_allocate_task,
+    run_module2_process_task,
     run_module1_policy_upr_task,
     run_module1_summary_task,
     run_module1_update_reserve_task,
@@ -42,11 +46,25 @@ from .tasks import (
 )
 from .utils import (
     init_job_work_dir,
+    init_module2_allocate_job_dirs,
+    init_module2_process_job_dirs,
     init_update_reserve_job_dirs,
     init_uw_parameters_job_dirs,
     job_input_subdir,
     job_output_dir,
 )
+
+MODULE1_JOB_TYPES = {
+    Module1Job.JobType.SUMMARY,
+    Module1Job.JobType.POLICY_UPR,
+    Module1Job.JobType.UPDATE_RESERVE,
+    Module1Job.JobType.UW_PARAMETERS,
+}
+MODULE2_JOB_TYPES = {
+    Module1Job.JobType.MODULE2_ALLOCATE,
+    Module1Job.JobType.MODULE2_PROCESS,
+}
+ALL_JOB_TYPES = MODULE1_JOB_TYPES | MODULE2_JOB_TYPES
 
 
 def _parse_dd_mm_yyyy(label: str, value: str) -> str:
@@ -116,7 +134,7 @@ class CanReadModule1Job(BasePermission):
             return True
         return user_has_any_permission(
             request.user,
-            ["module1.run", "outputs.download", "runhistory.view"],
+            ["module1.run", "module2.run", "outputs.download", "runhistory.view"],
         )
 
 
@@ -129,8 +147,21 @@ class Module1JobListView(generics.ListAPIView):
 
     def get_queryset(self):
         if user_has_role(self.request.user, "Super Admin"):
-            return Module1Job.objects.all()
-        return Module1Job.objects.filter(user=self.request.user)
+            return Module1Job.objects.filter(job_type__in=MODULE1_JOB_TYPES)
+        return Module1Job.objects.filter(user=self.request.user, job_type__in=MODULE1_JOB_TYPES)
+
+
+class ProcessingJobListView(generics.ListAPIView):
+    serializer_class = Module1JobSerializer
+    pagination_class = Module1JobPagination
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["runhistory.view"])]
+
+    def get_queryset(self):
+        if user_has_role(self.request.user, "Super Admin"):
+            return Module1Job.objects.filter(job_type__in=ALL_JOB_TYPES)
+        return Module1Job.objects.filter(user=self.request.user, job_type__in=ALL_JOB_TYPES)
 
 
 class Module1JobDetailView(generics.RetrieveAPIView):
@@ -167,9 +198,17 @@ class Module1JobDownloadView(APIView):
 
 def _get_accessible_job(request, pk) -> Module1Job:
     if user_has_role(request.user, "Super Admin"):
-        qs = Module1Job.objects.all()
+        qs = Module1Job.objects.filter(job_type__in=MODULE1_JOB_TYPES)
     else:
-        qs = Module1Job.objects.filter(user=request.user)
+        qs = Module1Job.objects.filter(user=request.user, job_type__in=MODULE1_JOB_TYPES)
+    return get_object_or_404(qs, pk=pk)
+
+
+def _get_accessible_module2_job(request, pk) -> Module1Job:
+    if user_has_role(request.user, "Super Admin"):
+        qs = Module1Job.objects.filter(job_type__in=MODULE2_JOB_TYPES)
+    else:
+        qs = Module1Job.objects.filter(user=request.user, job_type__in=MODULE2_JOB_TYPES)
     return get_object_or_404(qs, pk=pk)
 
 
@@ -488,3 +527,149 @@ class Module1UwParametersJobView(APIView):
         return Response(
             Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED
         )
+
+
+class Module2JobListView(generics.ListAPIView):
+    serializer_class = Module1JobSerializer
+    pagination_class = Module1JobPagination
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["runhistory.view"])]
+
+    def get_queryset(self):
+        if user_has_role(self.request.user, "Super Admin"):
+            return Module1Job.objects.filter(job_type__in=MODULE2_JOB_TYPES)
+        return Module1Job.objects.filter(user=self.request.user, job_type__in=MODULE2_JOB_TYPES)
+
+
+class Module2JobDetailView(generics.RetrieveAPIView):
+    serializer_class = Module1JobSerializer
+    permission_classes = [IsAuthenticated, CanReadModule1Job, Module1JobObjectPermission]
+    lookup_field = "pk"
+
+    def get_object(self):
+        return _get_accessible_module2_job(self.request, self.kwargs["pk"])
+
+
+class Module2JobDownloadView(APIView):
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    def get(self, request, pk):
+        job = _get_accessible_module2_job(request, pk)
+        if job.status != Module1Job.Status.SUCCESS or not job.output_zip:
+            raise Http404()
+        file_handle = job.output_zip.open("rb")
+        return FileResponse(file_handle, as_attachment=True, filename=f"module2-{job.id}.zip")
+
+
+class Module2AllocateJobView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def post(self, request):
+        combined = request.FILES.get("combined_summary")
+        if not combined:
+            raise ValidationError({"combined_summary": "Combined_Summary.xlsx is required."})
+        if not combined.name.lower().endswith(".xlsx"):
+            raise ValidationError({"combined_summary": "Must be an .xlsx file."})
+        _check_upload_budget([combined])
+        job = Module1Job.objects.create(
+            user=request.user,
+            job_type=Module1Job.JobType.MODULE2_ALLOCATE,
+            input_meta={},
+            work_dir="",
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        combined_dir = init_module2_allocate_job_dirs(job)
+        dest = combined_dir / "Combined_Summary.xlsx"
+        with dest.open("wb") as outf:
+            for chunk in combined.chunks():
+                outf.write(chunk)
+        job.input_meta = {
+            "files": {"combined_summary": {"name": combined.name, "size": combined.size}}
+        }
+        job.save(update_fields=["input_meta"])
+        run_module2_allocate_task.delay(str(job.id))
+        return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
+
+
+class Module2JobUlrRowsView(APIView):
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def get(self, request, pk):
+        job = _get_accessible_module2_job(request, pk)
+        if job.job_type != Module1Job.JobType.MODULE2_ALLOCATE:
+            raise ValidationError({"detail": "ULR rows are available only for allocate jobs."})
+        if job.status != Module1Job.Status.SUCCESS:
+            raise ValidationError({"detail": "ULR rows are available after successful allocate."})
+        rows = (job.input_meta or {}).get("ulr_rows") or []
+        return Response({"job_id": str(job.id), "rows": Module2UlrRowSerializer(rows, many=True).data})
+
+
+class Module2ProcessJobView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def post(self, request):
+        allocate_job_id = request.POST.get("allocate_job_id")
+        accounting_period = request.POST.get("accounting_period")
+        selected_ulr_raw = request.POST.get("selected_ulr", "[]")
+        previous = request.FILES.get("previous_period")
+        expense = request.FILES.get("expense_cf")
+        if not previous or not expense:
+            raise ValidationError({"detail": "previous_period and expense_cf are required."})
+        if not previous.name.lower().endswith(".xlsx") or not expense.name.lower().endswith(".xlsx"):
+            raise ValidationError({"detail": "Only .xlsx files are supported."})
+        try:
+            selected_ulr = json.loads(selected_ulr_raw)
+        except json.JSONDecodeError as exc:
+            raise ValidationError({"selected_ulr": "Invalid JSON."}) from exc
+        payload_serializer = Module2ProcessRequestSerializer(
+            data={
+                "allocate_job_id": allocate_job_id,
+                "accounting_period": accounting_period,
+                "selected_ulr": selected_ulr,
+            }
+        )
+        payload_serializer.is_valid(raise_exception=True)
+        payload = payload_serializer.validated_data
+        allocate_job = _get_accessible_module2_job(request, payload["allocate_job_id"])
+        if allocate_job.job_type != Module1Job.JobType.MODULE2_ALLOCATE:
+            raise ValidationError({"allocate_job_id": "Must reference a module2 allocate job."})
+        if allocate_job.status != Module1Job.Status.SUCCESS or not allocate_job.output_zip:
+            raise ValidationError({"allocate_job_id": "Allocate job must be completed successfully."})
+        _check_upload_budget([previous, expense])
+        job = Module1Job.objects.create(
+            user=request.user,
+            job_type=Module1Job.JobType.MODULE2_PROCESS,
+            input_meta={
+                "allocate_job_id": str(allocate_job.id),
+                "accounting_period": payload["accounting_period"],
+                "selected_ulr": payload["selected_ulr"],
+            },
+            work_dir="",
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        previous_dir, expense_dir = init_module2_process_job_dirs(job)
+        with (previous_dir / "Previous_Period.xlsx").open("wb") as outf:
+            for chunk in previous.chunks():
+                outf.write(chunk)
+        with (expense_dir / "Expense_CF.xlsx").open("wb") as outf:
+            for chunk in expense.chunks():
+                outf.write(chunk)
+        meta = job.input_meta or {}
+        meta["files"] = {
+            "previous_period": {"name": previous.name, "size": previous.size},
+            "expense_cf": {"name": expense.name, "size": expense.size},
+        }
+        job.input_meta = meta
+        job.save(update_fields=["input_meta"])
+        run_module2_process_task.delay(str(job.id))
+        return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)

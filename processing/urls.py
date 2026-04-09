@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("processing/jobs/", views.ProcessingJobListView.as_view()),
     path(
         "module1/combined-summary/uw-preview/",
         views.Module1CombinedSummaryUwPreviewView.as_view(),
@@ -17,4 +18,10 @@ urlpatterns = [
     path("module1/jobs/<uuid:pk>/output/files/", views.Module1JobOutputFilesView.as_view()),
     path("module1/jobs/<uuid:pk>/output/sheets/", views.Module1JobOutputSheetsView.as_view()),
     path("module1/jobs/<uuid:pk>/output/rows/", views.Module1JobOutputRowsView.as_view()),
+    path("module2/jobs/", views.Module2JobListView.as_view()),
+    path("module2/jobs/allocate/", views.Module2AllocateJobView.as_view()),
+    path("module2/jobs/process/", views.Module2ProcessJobView.as_view()),
+    path("module2/jobs/<uuid:pk>/ulr/", views.Module2JobUlrRowsView.as_view()),
+    path("module2/jobs/<uuid:pk>/", views.Module2JobDetailView.as_view()),
+    path("module2/jobs/<uuid:pk>/download/", views.Module2JobDownloadView.as_view()),
 ]

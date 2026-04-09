@@ -62,3 +62,39 @@ class OutputSheetPageResponseSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField(min_value=0)
     columns = serializers.ListField(child=serializers.CharField())
     rows = serializers.ListField(child=serializers.ListField())
+
+
+class Module2UlrRowSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    reserving_class = serializers.CharField()
+    uwy = serializers.CharField()
+    gwp = serializers.FloatField()
+    upr = serializers.FloatField()
+    gep = serializers.FloatField()
+    paid_claims = serializers.FloatField()
+    os = serializers.FloatField()
+    ibnr = serializers.FloatField()
+    incurred_claims = serializers.FloatField()
+    ultimate_claims = serializers.FloatField()
+    paid_lr = serializers.FloatField()
+    inc_lr = serializers.FloatField()
+    ult_lr = serializers.FloatField()
+    commission_expense = serializers.FloatField()
+    comm_ratio = serializers.FloatField()
+    exp_ratio = serializers.FloatField()
+    ri_percent = serializers.FloatField()
+    ra_percent = serializers.FloatField()
+    selected_ulr = serializers.FloatField(allow_null=True)
+    combined_ratio = serializers.FloatField()
+
+
+class Module2SelectedUlrInputSerializer(serializers.Serializer):
+    reserving_class = serializers.CharField(max_length=255)
+    uwy = serializers.CharField(max_length=32)
+    selected_ulr = serializers.FloatField(min_value=0)
+
+
+class Module2ProcessRequestSerializer(serializers.Serializer):
+    allocate_job_id = serializers.UUIDField()
+    accounting_period = serializers.IntegerField(min_value=1900, max_value=2200)
+    selected_ulr = Module2SelectedUlrInputSerializer(many=True, required=False, default=list)

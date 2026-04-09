@@ -10,6 +10,8 @@ class Module1Job(models.Model):
         POLICY_UPR = "policy_upr", "Policy UPR"
         UPDATE_RESERVE = "update_reserve", "Update Reserve"
         UW_PARAMETERS = "uw_parameters", "UW Parameters"
+        MODULE2_ALLOCATE = "module2_allocate", "Module2 Allocate"
+        MODULE2_PROCESS = "module2_process", "Module2 Process"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

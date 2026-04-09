@@ -48,3 +48,23 @@ def init_uw_parameters_job_dirs(job) -> Path:
     combined.mkdir(parents=True, exist_ok=True)
     (root / "out").mkdir(parents=True, exist_ok=True)
     return combined
+
+
+def init_module2_allocate_job_dirs(job) -> Path:
+    root = job_root(job)
+    root.mkdir(parents=True, exist_ok=True)
+    combined = root / "in" / "module2" / "combined"
+    combined.mkdir(parents=True, exist_ok=True)
+    (root / "out").mkdir(parents=True, exist_ok=True)
+    return combined
+
+
+def init_module2_process_job_dirs(job) -> tuple[Path, Path]:
+    root = job_root(job)
+    root.mkdir(parents=True, exist_ok=True)
+    previous = root / "in" / "module2" / "previous"
+    expense = root / "in" / "module2" / "expense"
+    previous.mkdir(parents=True, exist_ok=True)
+    expense.mkdir(parents=True, exist_ok=True)
+    (root / "out").mkdir(parents=True, exist_ok=True)
+    return previous, expense

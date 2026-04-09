@@ -204,12 +204,53 @@ python manage.py runserver
 | `GET` | `/api/module1/jobs/{uuid}/output/rows/?file=...&sheet=...&page=1&page_size=50` | Paginated sheet rows for in-app preview |
 | `POST` | `/api/module1/combined-summary/uw-preview/` | Multipart `combined_summary` — returns JSON templates for Exp Ratio, ULAE-RA, Discount rows (`module1.run`) |
 | `POST` | `/api/module1/jobs/uw-parameters/` | Multipart `combined_summary` + form field `payload` (JSON string with `exp_ratio`, `ulae_ra`, `discount`) — Celery job; ZIP contains updated `Combined_Summary.xlsx` (`module1.run`) |
+| `GET` | `/api/module2/jobs/` | List Module 2 jobs (`runhistory.view`) |
+| `POST` | `/api/module2/jobs/allocate/` | Start Module 2 allocate job with multipart `combined_summary` (`module2.run`) |
+| `GET` | `/api/module2/jobs/{uuid}/ulr/` | Get ULR rows after allocate success (`module2.run`) |
+| `POST` | `/api/module2/jobs/process/` | Start Module 2 process job with multipart `previous_period`, `expense_cf`, `allocate_job_id`, `accounting_period`, and JSON `selected_ulr` (`module2.run`) |
+| `GET` | `/api/module2/jobs/{uuid}/` | Module 2 job status/details (same read model as Module 1 + ownership) |
+| `GET` | `/api/module2/jobs/{uuid}/download/` | Module 2 ZIP download when successful (same read model as Module 1 + ownership) |
 
 **`payload` JSON shape (snake_case):**
 
 - `exp_ratio`: `[{ "reserving_class", "uwy", "exp_ratio", "ri_percent" }]`
 - `ulae_ra`: `[{ "reserving_class", "gross_ri": "GROSS" \| "RI", "ulae_percent", "ra_percent" }]`
 - `discount`: `[{ "time_period", "cy_discount", "py_discount" }]`
+
+---
+
+## Module 2 payloads
+
+### Allocate request
+
+- `combined_summary`: `Combined_Summary.xlsx` (multipart file)
+
+### ULR rows response
+
+- `rows`: list of objects with fields used by dashboard ULR table:
+  - `reserving_class`, `uwy`
+  - `gwp`, `upr`, `gep`, `paid_claims`, `os`, `ibnr`
+  - `incurred_claims`, `ultimate_claims`
+  - `paid_lr`, `inc_lr`, `ult_lr`
+  - `commission_expense`, `comm_ratio`, `exp_ratio`, `ri_percent`, `ra_percent`
+  - `selected_ulr`, `combined_ratio`
+
+### Process request
+
+- `allocate_job_id`: UUID of successful allocate job
+- `accounting_period`: year (integer string, e.g. `2024`)
+- `selected_ulr`: JSON array string:
+  - `[{ "reserving_class": "...", "uwy": "...", "selected_ulr": 0.73 }]`
+- `previous_period`: workbook containing `LIC_BOP` and `UPR-DAC_BOP`
+- `expense_cf`: workbook containing `Expense-CF`
+
+### Module 2 output workbook sheets
+
+- Allocate stage includes:
+  - `MainSheet`, `FutureCF`, `Discounted CF CY`, `Discounted CF PY`
+  - `Payment Pattern`, `Run-off`, `Loss Ratio`, `LC`, `CY-PY Discount`, `UPR-DAC_eop`
+- Process stage adds:
+  - `Movement Analysis`, `IFRS Summary`, `LRC BOP-EOP Reconciliation`, `LIC BOP-EOP Reconciliation`
 
 ---
 
@@ -258,6 +299,14 @@ Authorization: Bearer <access_token>
 - For production, use **gunicorn**:  
   `gunicorn config.wsgi:application --bind 0.0.0.0:8000`
 - Set `SECRET_KEY`, `DEBUG=False`, and restrict `ALLOWED_HOSTS` and CORS in production.
+
+## Module 2 release checklist
+
+- Run migrations: `python manage.py migrate`
+- Ensure Celery worker + Redis are running
+- Seed RBAC: `python manage.py seed_rbac`
+- Verify Module 1 flows remain green
+- Run Module 2 end-to-end: Allocate -> ULR edit/skip -> Process -> Download
 
 ### Module 1 release runbook
 
