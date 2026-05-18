@@ -25,6 +25,12 @@ class Module1Job(models.Model):
         on_delete=models.CASCADE,
         related_name="module1_jobs",
     )
+    organization = models.ForeignKey(
+        "tenants.Organization",
+        on_delete=models.CASCADE,
+        related_name="module1_jobs",
+        db_index=True,
+    )
     job_type = models.CharField(max_length=32, choices=JobType.choices)
     status = models.CharField(
         max_length=16,

@@ -30,6 +30,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('core.urls')),
     path('api/', include('accounts.urls')),
+    path('api/', include('tenants.urls')),
     path('api/', include('processing.urls')),
     path('api/auth/me/', auth_me),
     path('api/auth/profile/', profile),

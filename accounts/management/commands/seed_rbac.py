@@ -1,4 +1,14 @@
-"""Seed default permissions and roles per WEBAPP_REQUIREMENTS permission matrix."""
+"""Seed default permissions and roles.
+
+In the multi-tenant model:
+- Permission and Role records are GLOBAL (one catalog shared by all tenants).
+- Role assignment is per-organization via tenants.Membership.
+- Global super-admin = user.is_superuser (NOT a per-membership role).
+
+The "Super Admin" Role record below is kept for catalog completeness and so
+it can show up in role pickers, but the effective super-admin bypass is
+controlled by user.is_superuser.
+"""
 
 from django.core.management.base import BaseCommand
 
@@ -17,6 +27,14 @@ PERMISSIONS = [
     ("roles.delete", "Delete Roles", "Roles", "Delete roles from the system"),
     # Permissions (Super Admin only)
     ("permissions.manage", "Manage Permissions", "Permissions", "Create and manage permissions"),
+    # Organizations (Super Admin only)
+    ("orgs.view", "View Organizations", "Organizations", "View list of organizations"),
+    ("orgs.create", "Create Organizations", "Organizations", "Create new organizations"),
+    ("orgs.edit", "Edit Organizations", "Organizations", "Edit organization details"),
+    ("orgs.delete", "Delete Organizations", "Organizations", "Delete organizations"),
+    # Memberships (org admins)
+    ("memberships.view", "View Memberships", "Memberships", "View members of an organization"),
+    ("memberships.manage", "Manage Memberships", "Memberships", "Add, update, or remove organization members"),
     # Files
     ("files.upload", "Upload Files", "Files", "Upload input files"),
     ("files.view", "View File List", "Files", "View list of input and output files"),
@@ -30,11 +48,16 @@ PERMISSIONS = [
     ("runhistory.view", "View Run History", "Run History", "View processing run history"),
 ]
 
+# Note: "Super Admin" Role record exists for catalog completeness only.
+# Effective super-admin bypass is gated by user.is_superuser, so the Role's
+# permission set here is not consulted by the permission checks at runtime.
 ROLE_PERMISSIONS = {
     "Super Admin": [p[0] for p in PERMISSIONS],
     "Admin": [
+        # Org admin: manage users + memberships inside the org, view roles
         "users.view", "users.create", "users.edit", "users.delete",
-        "roles.view", "roles.create", "roles.edit", "roles.delete",
+        "roles.view",
+        "memberships.view", "memberships.manage",
         "files.upload", "files.view", "module1.run", "module2.run",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
@@ -52,28 +75,27 @@ ROLE_PERMISSIONS = {
 }
 
 ROLE_DESCRIPTIONS = {
-    "Super Admin": "Full access to all system features and settings",
-    "Admin": "Can manage users and roles; full access to processing",
-    "Actuary": "Can upload files and run Module 1 & 2; view outputs",
-    "Analyst": "Can upload files and run Module 1 & 2; view outputs",
-    "Viewer": "Read-only access to dashboard, files, and outputs",
+    "Super Admin": "Global super admin (effective access controlled by user.is_superuser flag).",
+    "Admin": "Organization admin: manage users and memberships within the organization.",
+    "Actuary": "Can upload files and run Module 1 & 2; view outputs.",
+    "Analyst": "Can upload files and run Module 1 & 2; view outputs.",
+    "Viewer": "Read-only access to dashboard, files, and outputs.",
 }
 
 
 class Command(BaseCommand):
-    help = "Seed default permissions and roles per WEBAPP_REQUIREMENTS"
+    help = "Seed default permissions and roles."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--force",
             action="store_true",
-            help="Recreate roles and permissions (idempotent for permissions)",
+            help="Reset role permission sets to the seeded defaults.",
         )
 
     def handle(self, *args, **options):
         force = options["force"]
 
-        # Create permissions (idempotent)
         key_to_perm = {}
         for key, name, module, desc in PERMISSIONS:
             perm, created = Permission.objects.get_or_create(
@@ -84,7 +106,6 @@ class Command(BaseCommand):
                 self.stdout.write(f"Created permission: {key}")
             key_to_perm[key] = perm
 
-        # Create/update roles
         for role_name, perm_keys in ROLE_PERMISSIONS.items():
             role, created = Role.objects.get_or_create(
                 name=role_name,

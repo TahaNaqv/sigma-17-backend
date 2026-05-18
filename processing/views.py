@@ -6,7 +6,7 @@ from django.conf import settings
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
@@ -17,6 +17,7 @@ from accounts.permissions import (
     user_has_any_permission,
     user_has_role,
 )
+from tenants.permissions import get_request_org
 
 from .models import Module1Job
 from .output_preview import (
@@ -65,6 +66,36 @@ MODULE2_JOB_TYPES = {
     Module1Job.JobType.MODULE2_PROCESS,
 }
 ALL_JOB_TYPES = MODULE1_JOB_TYPES | MODULE2_JOB_TYPES
+
+
+def _require_org(request):
+    """Return the request's active organization or raise PermissionDenied.
+    Superusers without an org context get None back (and can pass ?all_orgs=true)."""
+    org = get_request_org(request)
+    if org is None and not request.user.is_superuser:
+        raise PermissionDenied("An active organization context is required.")
+    return org
+
+
+def _scope_jobs_qs(request, job_types):
+    """Build a Module1Job queryset filtered by the active organization.
+
+    Superusers see all orgs by default; non-superusers see only their active org.
+    `?all_orgs=true` is allowed only for superusers.
+    """
+    qs = Module1Job.objects.filter(job_type__in=job_types)
+    user = request.user
+    org = get_request_org(request)
+    all_orgs = (request.query_params.get("all_orgs") or "").lower() in ("1", "true", "yes")
+    if user.is_superuser:
+        if all_orgs:
+            return qs
+        if org is not None:
+            return qs.filter(organization=org)
+        return qs  # superuser with no active org -> all
+    if org is None:
+        raise PermissionDenied("An active organization context is required.")
+    return qs.filter(organization=org)
 
 
 def _parse_dd_mm_yyyy(label: str, value: str) -> str:
@@ -118,23 +149,29 @@ def _save_xlsx_list(dest, files):
 
 
 class Module1JobObjectPermission(BasePermission):
+    """Job-level ownership: same org AND (same user OR superuser)."""
+
     def has_object_permission(self, request, view, obj: Module1Job):
-        if user_has_role(request.user, "Super Admin"):
+        if request.user.is_superuser:
             return True
+        org = get_request_org(request)
+        if org is None or obj.organization_id != org.id:
+            return False
         return obj.user_id == request.user.id
 
 
 class CanReadModule1Job(BasePermission):
-    """Detail/download: need one of these permissions (plus object ownership)."""
+    """Detail/download: need one of these permissions in the active org."""
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        if user_has_role(request.user, "Super Admin"):
+        if request.user.is_superuser:
             return True
         return user_has_any_permission(
             request.user,
             ["module1.run", "module2.run", "outputs.download", "runhistory.view"],
+            request=request,
         )
 
 
@@ -146,9 +183,7 @@ class Module1JobListView(generics.ListAPIView):
         return [IsAuthenticated(), HasPermission(["runhistory.view"])]
 
     def get_queryset(self):
-        if user_has_role(self.request.user, "Super Admin"):
-            return Module1Job.objects.filter(job_type__in=MODULE1_JOB_TYPES)
-        return Module1Job.objects.filter(user=self.request.user, job_type__in=MODULE1_JOB_TYPES)
+        return _scope_jobs_qs(self.request, MODULE1_JOB_TYPES)
 
 
 class ProcessingJobListView(generics.ListAPIView):
@@ -159,9 +194,7 @@ class ProcessingJobListView(generics.ListAPIView):
         return [IsAuthenticated(), HasPermission(["runhistory.view"])]
 
     def get_queryset(self):
-        if user_has_role(self.request.user, "Super Admin"):
-            return Module1Job.objects.filter(job_type__in=ALL_JOB_TYPES)
-        return Module1Job.objects.filter(user=self.request.user, job_type__in=ALL_JOB_TYPES)
+        return _scope_jobs_qs(self.request, ALL_JOB_TYPES)
 
 
 class Module1JobDetailView(generics.RetrieveAPIView):
@@ -174,14 +207,10 @@ class Module1JobDetailView(generics.RetrieveAPIView):
     lookup_field = "pk"
 
     def get_queryset(self):
-        if user_has_role(self.request.user, "Super Admin"):
-            return Module1Job.objects.all()
-        return Module1Job.objects.filter(user=self.request.user)
+        return _scope_jobs_qs(self.request, MODULE1_JOB_TYPES)
 
 
 class Module1JobDownloadView(APIView):
-    """Ownership enforced via queryset (404 if not your job, unless Super Admin)."""
-
     permission_classes = [IsAuthenticated, CanReadModule1Job]
 
     def get(self, request, pk):
@@ -197,19 +226,20 @@ class Module1JobDownloadView(APIView):
 
 
 def _get_accessible_job(request, pk) -> Module1Job:
-    if user_has_role(request.user, "Super Admin"):
-        qs = Module1Job.objects.filter(job_type__in=MODULE1_JOB_TYPES)
-    else:
-        qs = Module1Job.objects.filter(user=request.user, job_type__in=MODULE1_JOB_TYPES)
-    return get_object_or_404(qs, pk=pk)
+    qs = _scope_jobs_qs(request, MODULE1_JOB_TYPES)
+    job = get_object_or_404(qs, pk=pk)
+    # Non-superusers must also be the owner of the job within their org.
+    if not request.user.is_superuser and job.user_id != request.user.id:
+        raise Http404()
+    return job
 
 
 def _get_accessible_module2_job(request, pk) -> Module1Job:
-    if user_has_role(request.user, "Super Admin"):
-        qs = Module1Job.objects.filter(job_type__in=MODULE2_JOB_TYPES)
-    else:
-        qs = Module1Job.objects.filter(user=request.user, job_type__in=MODULE2_JOB_TYPES)
-    return get_object_or_404(qs, pk=pk)
+    qs = _scope_jobs_qs(request, MODULE2_JOB_TYPES)
+    job = get_object_or_404(qs, pk=pk)
+    if not request.user.is_superuser and job.user_id != request.user.id:
+        raise Http404()
+    return job
 
 
 def _open_job_output_zip(job: Module1Job):
@@ -290,6 +320,21 @@ class Module1JobOutputRowsView(APIView):
         return Response(OutputSheetPageResponseSerializer(payload).data)
 
 
+def _create_job(request, *, job_type, input_meta):
+    """Helper that creates a Module1Job stamped with both user and active org."""
+    org = _require_org(request)
+    if org is None:
+        # Superuser running without org context — must provide one to create jobs.
+        raise PermissionDenied("Select an organization before creating jobs.")
+    return Module1Job.objects.create(
+        user=request.user,
+        organization=org,
+        job_type=job_type,
+        input_meta=input_meta,
+        work_dir="",
+    )
+
+
 class Module1SummaryJobView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
@@ -319,8 +364,8 @@ class Module1SummaryJobView(APIView):
         extra = [existing] if existing else []
         _check_upload_budget(premium, claims_paid, claims_os, extra)
 
-        job = Module1Job.objects.create(
-            user=request.user,
+        job = _create_job(
+            request,
             job_type=Module1Job.JobType.SUMMARY,
             input_meta={
                 "exp_start": exp_start,
@@ -328,7 +373,6 @@ class Module1SummaryJobView(APIView):
                 "bop": bop,
                 "eop": eop,
             },
-            work_dir="",
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
@@ -381,11 +425,10 @@ class Module1PolicyUprJobView(APIView):
             raise ValidationError({"premium": "At least one premium file is required."})
         _check_upload_budget(premium)
 
-        job = Module1Job.objects.create(
-            user=request.user,
+        job = _create_job(
+            request,
             job_type=Module1Job.JobType.POLICY_UPR,
             input_meta={"bop": bop, "eop": eop},
-            work_dir="",
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
@@ -418,11 +461,10 @@ class Module1UpdateReserveJobView(APIView):
         extra = [combined] if combined else []
         _check_upload_budget(reserve_files, extra)
 
-        job = Module1Job.objects.create(
-            user=request.user,
+        job = _create_job(
+            request,
             job_type=Module1Job.JobType.UPDATE_RESERVE,
             input_meta={},
-            work_dir="",
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
@@ -503,11 +545,10 @@ class Module1UwParametersJobView(APIView):
             raise ValidationError({"payload": "Payload must be a JSON object."})
         _check_upload_budget([f])
 
-        job = Module1Job.objects.create(
-            user=request.user,
+        job = _create_job(
+            request,
             job_type=Module1Job.JobType.UW_PARAMETERS,
             input_meta={"payload": payload},
-            work_dir="",
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
@@ -537,9 +578,7 @@ class Module2JobListView(generics.ListAPIView):
         return [IsAuthenticated(), HasPermission(["runhistory.view"])]
 
     def get_queryset(self):
-        if user_has_role(self.request.user, "Super Admin"):
-            return Module1Job.objects.filter(job_type__in=MODULE2_JOB_TYPES)
-        return Module1Job.objects.filter(user=self.request.user, job_type__in=MODULE2_JOB_TYPES)
+        return _scope_jobs_qs(self.request, MODULE2_JOB_TYPES)
 
 
 class Module2JobDetailView(generics.RetrieveAPIView):
@@ -575,11 +614,10 @@ class Module2AllocateJobView(APIView):
         if not combined.name.lower().endswith(".xlsx"):
             raise ValidationError({"combined_summary": "Must be an .xlsx file."})
         _check_upload_budget([combined])
-        job = Module1Job.objects.create(
-            user=request.user,
+        job = _create_job(
+            request,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             input_meta={},
-            work_dir="",
         )
         job.work_dir = f"module1_jobs/{job.id}"
         job.save(update_fields=["work_dir"])
@@ -645,15 +683,14 @@ class Module2ProcessJobView(APIView):
         if allocate_job.status != Module1Job.Status.SUCCESS or not allocate_job.output_zip:
             raise ValidationError({"allocate_job_id": "Allocate job must be completed successfully."})
         _check_upload_budget([previous, expense])
-        job = Module1Job.objects.create(
-            user=request.user,
+        job = _create_job(
+            request,
             job_type=Module1Job.JobType.MODULE2_PROCESS,
             input_meta={
                 "allocate_job_id": str(allocate_job.id),
                 "accounting_period": payload["accounting_period"],
                 "selected_ulr": payload["selected_ulr"],
             },
-            work_dir="",
         )
         job.work_dir = f"module1_jobs/{job.id}"
         job.save(update_fields=["work_dir"])

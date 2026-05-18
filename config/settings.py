@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'core',
+    'tenants',
     'accounts',
     'processing',
 ]
@@ -193,11 +194,17 @@ CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=DEBUG)
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     'http://localhost:3000',
     'http://localhost:5173',
+    'http://localhost:8080',
     'https://sigma17.leadrisks.com',
     "https://www.sigma17.leadrisks.com",
-    "https://sigma17.netlify.app", 
+    "https://sigma17.netlify.app",
     "https://sigma17.vercel.app",
 ])
+
+# Allow the tenant-context header to come through CORS
+CORS_ALLOW_HEADERS = list(__import__('corsheaders.defaults', fromlist=['default_headers']).default_headers) + [
+    'x-organization-id',
+]
 
 # Security settings for production
 if not DEBUG:

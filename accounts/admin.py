@@ -14,5 +14,5 @@ class RoleAdmin(admin.ModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'status']
-    filter_horizontal = ['roles']
+    list_display = ['user', 'status', 'active_organization']
+    list_select_related = ('user', 'active_organization')

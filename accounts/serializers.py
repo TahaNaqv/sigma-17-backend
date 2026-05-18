@@ -1,5 +1,8 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from rest_framework import serializers
+
+from tenants.models import Membership
 
 from .models import Permission, Role, UserProfile
 
@@ -43,8 +46,17 @@ class RoleSerializer(serializers.ModelSerializer):
         return instance
 
 
+def _role_ids_in_org(user, org):
+    if org is None:
+        return []
+    m = Membership.objects.filter(user=user, organization=org).first()
+    if not m:
+        return []
+    return list(m.roles.values_list("id", flat=True))
+
+
 class UserListSerializer(serializers.ModelSerializer):
-    """RBAC user representation for list/detail (matches dashboard shape)."""
+    """User representation, with roleIds scoped to the requesting org's membership."""
     name = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     roleIds = serializers.SerializerMethodField()
@@ -65,10 +77,8 @@ class UserListSerializer(serializers.ModelSerializer):
             return "active" if obj.is_active else "inactive"
 
     def get_roleIds(self, obj):
-        try:
-            return list(obj.profile.roles.values_list("id", flat=True))
-        except UserProfile.DoesNotExist:
-            return []
+        org = (self.context or {}).get("organization")
+        return _role_ids_in_org(obj, org)
 
     def get_createdAt(self, obj):
         try:
@@ -78,14 +88,32 @@ class UserListSerializer(serializers.ModelSerializer):
 
 
 class UserCreateUpdateSerializer(serializers.Serializer):
-    """For create/update user (accepts name, email, password, status, roleIds)."""
+    """Create/update a user.
+
+    On create: creates the user AND creates a Membership in the requesting
+    org with the given roleIds. On update: updates user fields and (if
+    roleIds is provided) updates the membership in the requesting org.
+
+    NOTE: This serializer requires an `organization` in serializer context.
+    """
     name = serializers.CharField(max_length=255, required=True)
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     status = serializers.ChoiceField(choices=["active", "inactive"], default="active")
-    roleIds = serializers.ListField(child=serializers.IntegerField(), required=False, default=list)
+    roleIds = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list
+    )
 
+    def _get_org(self):
+        return (self.context or {}).get("organization")
+
+    @transaction.atomic
     def create(self, validated_data):
+        org = self._get_org()
+        if org is None:
+            raise serializers.ValidationError(
+                {"detail": "An active organization is required to create users."}
+            )
         name = validated_data["name"]
         email = validated_data["email"]
         password = validated_data.get("password", "")
@@ -106,12 +134,20 @@ class UserCreateUpdateSerializer(serializers.Serializer):
         )
         profile = user.profile
         profile.status = status
+        if not profile.active_organization_id:
+            profile.active_organization = org
         profile.save()
+
+        membership = Membership.objects.create(
+            user=user, organization=org, status="active"
+        )
         if role_ids:
-            profile.roles.set(Role.objects.filter(id__in=role_ids))
+            membership.roles.set(Role.objects.filter(id__in=role_ids))
         return user
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        org = self._get_org()
         name = validated_data.get("name")
         if name is not None:
             parts = name.strip().split(None, 1)
@@ -131,11 +167,14 @@ class UserCreateUpdateSerializer(serializers.Serializer):
             except UserProfile.DoesNotExist:
                 pass
         instance.save()
-        if "roleIds" in validated_data:
-            try:
-                instance.profile.roles.set(Role.objects.filter(id__in=validated_data["roleIds"]))
-            except UserProfile.DoesNotExist:
-                pass
+
+        if "roleIds" in validated_data and org is not None:
+            membership, _ = Membership.objects.get_or_create(
+                user=instance, organization=org, defaults={"status": "active"}
+            )
+            membership.roles.set(
+                Role.objects.filter(id__in=validated_data["roleIds"])
+            )
         return instance
 
 
