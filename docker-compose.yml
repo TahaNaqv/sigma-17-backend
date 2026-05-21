@@ -102,12 +102,55 @@ services:
     networks:
       - sigma17-network
 
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sigma17-celery-beat
+    restart: always
+    # Single beat scheduler. Fires periodic tasks defined in config/celery.py
+    # (currently: daily 03:15 UTC output-retention sweep). The pidfile and
+    # schedule shelf live in /app/celerybeat (mounted via beat_volume) so
+    # they survive container restarts.
+    command: >
+      sh -c "
+        python manage.py wait_for_db &&
+        mkdir -p /app/celerybeat &&
+        celery -A config beat -l info
+          --pidfile=/app/celerybeat/celerybeat.pid
+          --schedule=/app/celerybeat/celerybeat-schedule
+      "
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+      - beat_volume:/app/celerybeat
+    environment:
+      DEBUG: ${DEBUG}
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      DB_HOST: db
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: 5432
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - sigma17-network
+
 volumes:
   postgres_data:
     driver: local
   static_volume:
     driver: local
   media_volume:
+    driver: local
+  beat_volume:
     driver: local
 
 networks:
