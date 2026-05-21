@@ -22,6 +22,17 @@ class Organization(models.Model):
         related_name="created_organizations",
     )
 
+    # Retention policy: output ZIPs are eligible for cleanup this many days
+    # after job success. Null means retain indefinitely.
+    default_output_retention_days = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Output ZIPs become eligible for the daily cleanup sweep this "
+            "many days after the job succeeds. Leave blank to retain forever."
+        ),
+    )
+
     class Meta:
         ordering = ["name"]
 

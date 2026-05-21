@@ -72,3 +72,55 @@ Record each restore drill result with timestamp and operator.
   - job failures by module/job_type
   - queue depth / queue lag
   - API latency p95 for job list/detail/status endpoints
+  - daily retention sweep counters (`retention.sweep_complete` log line: `examined`, `purged`, `errors`)
+
+## 7) Chaining + retention operations
+
+**Chaining lineage**
+- `Module1Job.source_job` is a `PROTECT` self-FK. Attempting to delete a row
+  that another job references will raise `ProtectedError`. This is the safe
+  default; never use raw SQL to bypass it.
+- To remove a job that has descendants, run **cascade purge** from Django
+  admin: select the row(s), choose "Force purge job(s) and all descendants".
+  This deletes the descendant subtree leaves-first, then the root, and removes
+  every output ZIP along the way. The action records `retention.cascade_purge_complete`
+  with `deleted_rows`, `purged_outputs`, `actor_id`.
+
+**Daily output retention sweeper**
+- Celery beat task `processing.tasks.purge_expired_outputs_task`. Schedule:
+  03:15 UTC daily, batch size 500. Bounded to keep workers responsive.
+- Selection criteria: `status=SUCCESS AND retention_until <= now AND legal_hold=False
+  AND output_purged_at IS NULL AND output_zip != ''`.
+- The sweeper deletes only the output ZIP file; it never deletes job rows.
+  `output_purged_at` and an empty `output_artifacts` mark the row.
+
+**Per-organization retention policy**
+- Set `Organization.default_output_retention_days` in the org form on the
+  dashboard or in Django admin. Blank = retain indefinitely.
+- Existing jobs are not retroactively re-stamped; the policy applies to
+  jobs that succeed AFTER the org setting takes effect.
+
+**Legal hold**
+- For regulated or audit-flagged jobs, set `legal_hold=True` on `Module1Job`
+  (admin actions: "Set legal hold" / "Clear legal hold"). The sweeper skips
+  these rows entirely.
+- Cascade purge refuses to run if any node in the subtree has `legal_hold=True`
+  unless explicitly passed `force=True`.
+
+**One-shot backfill after the chaining migration**
+- After applying `processing.0002_chaining_retention_lineage`, run:
+  ```bash
+  python manage.py backfill_output_artifacts
+  ```
+  This walks every successful job's output ZIP and stamps `output_artifacts`
+  so the candidate-list endpoint and chaining filters work for historical
+  rows. The command is idempotent, supports `--dry-run`, `--only-empty`,
+  and `--batch-size`.
+
+**Forensics for chained jobs**
+- The job detail page in the dashboard shows a lineage badge ("From: Summary
+  #3f9a · ...") linking to the source job.
+- Django admin shows both `source_job` (link) and `derived_jobs` (list) on
+  every job detail page.
+- Task logs include structured `extra` fields: `job_id`, `job_type`,
+  `org_id`, `user_id`, `source_job_id`, `source_artifact`.

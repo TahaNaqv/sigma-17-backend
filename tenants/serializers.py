@@ -12,6 +12,12 @@ class OrganizationSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     memberCount = serializers.SerializerMethodField()
     isActive = serializers.BooleanField(source="is_active", required=False)
+    defaultOutputRetentionDays = serializers.IntegerField(
+        source="default_output_retention_days",
+        required=False,
+        allow_null=True,
+        min_value=1,
+    )
 
     class Meta:
         model = Organization
@@ -23,6 +29,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
             "isActive",
             "createdAt",
             "memberCount",
+            "defaultOutputRetentionDays",
         ]
         read_only_fields = ["id", "slug", "createdAt", "memberCount"]
 

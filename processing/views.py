@@ -28,22 +28,30 @@ from .output_preview import (
 )
 from .pagination import Module1JobPagination
 from .serializers import (
+    Module1JobSerializer,
     Module2ProcessRequestSerializer,
     Module2UlrRowSerializer,
-    Module1JobSerializer,
     OutputFilesResponseSerializer,
     OutputSheetPageResponseSerializer,
     OutputSheetsResponseSerializer,
+    SourceCandidateSerializer,
+)
+from .services.source_resolver import (
+    ARTIFACT_COMBINED_SUMMARY,
+    ARTIFACT_PRODUCERS,
+    list_candidate_sources,
+    read_artifact_bytes,
+    resolve_source_job,
 )
 from module1_engine.uw_patch import build_default_payload_template_from_workbook
 
 from .tasks import (
-    run_module2_allocate_task,
-    run_module2_process_task,
     run_module1_policy_upr_task,
     run_module1_summary_task,
     run_module1_update_reserve_task,
     run_module1_uw_parameters_task,
+    run_module2_allocate_task,
+    run_module2_process_task,
 )
 from .utils import (
     init_job_work_dir,
@@ -66,6 +74,11 @@ MODULE2_JOB_TYPES = {
     Module1Job.JobType.MODULE2_PROCESS,
 }
 ALL_JOB_TYPES = MODULE1_JOB_TYPES | MODULE2_JOB_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Org / scope helpers
+# ---------------------------------------------------------------------------
 
 
 def _require_org(request):
@@ -148,6 +161,59 @@ def _save_xlsx_list(dest, files):
     return saved
 
 
+# ---------------------------------------------------------------------------
+# Chaining helpers shared across consumer endpoints
+# ---------------------------------------------------------------------------
+
+
+def _read_combined_summary_source(
+    request,
+    *,
+    field_name: str = "source_job_id",
+):
+    """Resolve the chained Combined_Summary source from request body, or None.
+
+    Returns the resolved Module1Job or None if the caller did not supply
+    `source_job_id`. Raises ValidationError on any malformed/invalid id.
+    """
+    raw = request.POST.get(field_name) or request.data.get(field_name)
+    if not raw:
+        return None
+    return resolve_source_job(
+        request=request,
+        source_job_id=raw,
+        artifact=ARTIFACT_COMBINED_SUMMARY,
+        field_name=field_name,
+    )
+
+
+def _require_exactly_one(file_obj, source_job, *, file_name, source_name):
+    """Required-input endpoints: file XOR source_job, exactly one."""
+    has_file = bool(file_obj)
+    has_source = source_job is not None
+    if has_file and has_source:
+        raise ValidationError(
+            {"detail": f"Provide either {file_name} or {source_name}, not both."}
+        )
+    if not has_file and not has_source:
+        raise ValidationError(
+            {"detail": f"Provide either {file_name} or {source_name}."}
+        )
+
+
+def _require_at_most_one(file_obj, source_job, *, file_name, source_name):
+    """Optional-input endpoints: file or source_job or neither."""
+    if file_obj and source_job is not None:
+        raise ValidationError(
+            {"detail": f"Provide either {file_name} or {source_name}, not both."}
+        )
+
+
+# ---------------------------------------------------------------------------
+# Permission classes
+# ---------------------------------------------------------------------------
+
+
 class Module1JobObjectPermission(BasePermission):
     """Job-level ownership: same org AND (same user OR superuser)."""
 
@@ -175,6 +241,11 @@ class CanReadModule1Job(BasePermission):
         )
 
 
+# ---------------------------------------------------------------------------
+# List / detail / download views
+# ---------------------------------------------------------------------------
+
+
 class Module1JobListView(generics.ListAPIView):
     serializer_class = Module1JobSerializer
     pagination_class = Module1JobPagination
@@ -183,7 +254,7 @@ class Module1JobListView(generics.ListAPIView):
         return [IsAuthenticated(), HasPermission(["runhistory.view"])]
 
     def get_queryset(self):
-        return _scope_jobs_qs(self.request, MODULE1_JOB_TYPES)
+        return _scope_jobs_qs(self.request, MODULE1_JOB_TYPES).select_related("source_job")
 
 
 class ProcessingJobListView(generics.ListAPIView):
@@ -194,7 +265,7 @@ class ProcessingJobListView(generics.ListAPIView):
         return [IsAuthenticated(), HasPermission(["runhistory.view"])]
 
     def get_queryset(self):
-        return _scope_jobs_qs(self.request, ALL_JOB_TYPES)
+        return _scope_jobs_qs(self.request, ALL_JOB_TYPES).select_related("source_job")
 
 
 class Module1JobDetailView(generics.RetrieveAPIView):
@@ -207,7 +278,7 @@ class Module1JobDetailView(generics.RetrieveAPIView):
     lookup_field = "pk"
 
     def get_queryset(self):
-        return _scope_jobs_qs(self.request, MODULE1_JOB_TYPES)
+        return _scope_jobs_qs(self.request, MODULE1_JOB_TYPES).select_related("source_job")
 
 
 class Module1JobDownloadView(APIView):
@@ -215,7 +286,7 @@ class Module1JobDownloadView(APIView):
 
     def get(self, request, pk):
         job = _get_accessible_job(request, pk)
-        if job.status != Module1Job.Status.SUCCESS or not job.output_zip:
+        if not job.output_available:
             raise Http404()
         file_handle = job.output_zip.open("rb")
         return FileResponse(
@@ -228,7 +299,6 @@ class Module1JobDownloadView(APIView):
 def _get_accessible_job(request, pk) -> Module1Job:
     qs = _scope_jobs_qs(request, MODULE1_JOB_TYPES)
     job = get_object_or_404(qs, pk=pk)
-    # Non-superusers must also be the owner of the job within their org.
     if not request.user.is_superuser and job.user_id != request.user.id:
         raise Http404()
     return job
@@ -243,7 +313,7 @@ def _get_accessible_module2_job(request, pk) -> Module1Job:
 
 
 def _open_job_output_zip(job: Module1Job):
-    if job.status != Module1Job.Status.SUCCESS or not job.output_zip:
+    if not job.output_available:
         raise Http404()
     return job.output_zip.open("rb")
 
@@ -320,11 +390,15 @@ class Module1JobOutputRowsView(APIView):
         return Response(OutputSheetPageResponseSerializer(payload).data)
 
 
-def _create_job(request, *, job_type, input_meta):
-    """Helper that creates a Module1Job stamped with both user and active org."""
+# ---------------------------------------------------------------------------
+# Job creation
+# ---------------------------------------------------------------------------
+
+
+def _create_job(request, *, job_type, input_meta, source_job=None, source_artifact=""):
+    """Helper that creates a Module1Job stamped with user, org, and optional source."""
     org = _require_org(request)
     if org is None:
-        # Superuser running without org context — must provide one to create jobs.
         raise PermissionDenied("Select an organization before creating jobs.")
     return Module1Job.objects.create(
         user=request.user,
@@ -332,6 +406,8 @@ def _create_job(request, *, job_type, input_meta):
         job_type=job_type,
         input_meta=input_meta,
         work_dir="",
+        source_job=source_job,
+        source_artifact=source_artifact or "",
     )
 
 
@@ -351,6 +427,9 @@ class Module1SummaryJobView(APIView):
         claims_paid = request.FILES.getlist("claims_paid")
         claims_os = request.FILES.getlist("claims_os")
         existing = request.FILES.get("existing_combined_summary")
+        existing_source = _read_combined_summary_source(
+            request, field_name="existing_combined_summary_source_id"
+        )
 
         if not premium:
             raise ValidationError({"premium": "At least one premium file is required."})
@@ -360,6 +439,12 @@ class Module1SummaryJobView(APIView):
             )
         if not claims_os:
             raise ValidationError({"claims_os": "At least one claims OS file is required."})
+
+        _require_at_most_one(
+            existing, existing_source,
+            file_name="existing_combined_summary",
+            source_name="existing_combined_summary_source_id",
+        )
 
         extra = [existing] if existing else []
         _check_upload_budget(premium, claims_paid, claims_os, extra)
@@ -373,6 +458,8 @@ class Module1SummaryJobView(APIView):
                 "bop": bop,
                 "eop": eop,
             },
+            source_job=existing_source,
+            source_artifact=(ARTIFACT_COMBINED_SUMMARY if existing_source else ""),
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
@@ -456,8 +543,17 @@ class Module1UpdateReserveJobView(APIView):
     def post(self, request):
         reserve_files = request.FILES.getlist("reserve")
         combined = request.FILES.get("combined_summary")
+        combined_source = _read_combined_summary_source(request)
+
         if not reserve_files:
             raise ValidationError({"reserve": "At least one reserve workbook is required."})
+
+        _require_at_most_one(
+            combined, combined_source,
+            file_name="combined_summary",
+            source_name="source_job_id",
+        )
+
         extra = [combined] if combined else []
         _check_upload_budget(reserve_files, extra)
 
@@ -465,6 +561,8 @@ class Module1UpdateReserveJobView(APIView):
             request,
             job_type=Module1Job.JobType.UPDATE_RESERVE,
             input_meta={},
+            source_job=combined_source,
+            source_artifact=(ARTIFACT_COMBINED_SUMMARY if combined_source else ""),
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
@@ -498,7 +596,10 @@ class Module1UpdateReserveJobView(APIView):
 
 
 class Module1CombinedSummaryUwPreviewView(APIView):
-    """Parse Combined_Summary.xlsx and return default rows for UW parameter UI."""
+    """Parse Combined_Summary.xlsx and return default rows for UW parameter UI.
+
+    Accepts XOR: `combined_summary` file or `source_job_id`.
+    """
 
     parser_classes = [MultiPartParser, FormParser]
 
@@ -507,14 +608,21 @@ class Module1CombinedSummaryUwPreviewView(APIView):
 
     def post(self, request):
         f = request.FILES.get("combined_summary")
-        if not f:
-            raise ValidationError(
-                {"combined_summary": "Upload Combined_Summary.xlsx."}
-            )
-        if not f.name.lower().endswith(".xlsx"):
-            raise ValidationError({"combined_summary": "Must be an .xlsx file."})
-        _check_upload_budget([f])
-        raw = f.read()
+        source = _read_combined_summary_source(request)
+        _require_exactly_one(
+            f, source,
+            file_name="combined_summary",
+            source_name="source_job_id",
+        )
+
+        if f:
+            if not f.name.lower().endswith(".xlsx"):
+                raise ValidationError({"combined_summary": "Must be an .xlsx file."})
+            _check_upload_budget([f])
+            raw = f.read()
+        else:
+            raw = read_artifact_bytes(source_job=source, artifact=ARTIFACT_COMBINED_SUMMARY)
+
         try:
             tpl = build_default_payload_template_from_workbook(raw)
         except ValueError as exc:
@@ -530,12 +638,13 @@ class Module1UwParametersJobView(APIView):
 
     def post(self, request):
         f = request.FILES.get("combined_summary")
-        if not f:
-            raise ValidationError(
-                {"combined_summary": "Upload Combined_Summary.xlsx."}
-            )
-        if not f.name.lower().endswith(".xlsx"):
-            raise ValidationError({"combined_summary": "Must be an .xlsx file."})
+        source = _read_combined_summary_source(request)
+        _require_exactly_one(
+            f, source,
+            file_name="combined_summary",
+            source_name="source_job_id",
+        )
+
         raw_payload = request.POST.get("payload", "{}")
         try:
             payload = json.loads(raw_payload)
@@ -543,24 +652,32 @@ class Module1UwParametersJobView(APIView):
             raise ValidationError({"payload": "Invalid JSON."}) from exc
         if not isinstance(payload, dict):
             raise ValidationError({"payload": "Payload must be a JSON object."})
-        _check_upload_budget([f])
+
+        if f:
+            if not f.name.lower().endswith(".xlsx"):
+                raise ValidationError({"combined_summary": "Must be an .xlsx file."})
+            _check_upload_budget([f])
 
         job = _create_job(
             request,
             job_type=Module1Job.JobType.UW_PARAMETERS,
             input_meta={"payload": payload},
+            source_job=source,
+            source_artifact=(ARTIFACT_COMBINED_SUMMARY if source else ""),
         )
         rel = f"module1_jobs/{job.id}"
         job.work_dir = rel
         job.save(update_fields=["work_dir"])
         combined_dir = init_uw_parameters_job_dirs(job)
-        dest = combined_dir / "Combined_Summary.xlsx"
-        with dest.open("wb") as outf:
-            for chunk in f.chunks():
-                outf.write(chunk)
-        meta_files = {
-            "combined_summary": {"name": f.name, "size": f.size},
-        }
+
+        meta_files = {}
+        if f:
+            dest = combined_dir / "Combined_Summary.xlsx"
+            with dest.open("wb") as outf:
+                for chunk in f.chunks():
+                    outf.write(chunk)
+            meta_files["combined_summary"] = {"name": f.name, "size": f.size}
+
         job.input_meta = {**job.input_meta, "files": meta_files}
         job.save(update_fields=["input_meta"])
 
@@ -578,7 +695,7 @@ class Module2JobListView(generics.ListAPIView):
         return [IsAuthenticated(), HasPermission(["runhistory.view"])]
 
     def get_queryset(self):
-        return _scope_jobs_qs(self.request, MODULE2_JOB_TYPES)
+        return _scope_jobs_qs(self.request, MODULE2_JOB_TYPES).select_related("source_job")
 
 
 class Module2JobDetailView(generics.RetrieveAPIView):
@@ -595,7 +712,7 @@ class Module2JobDownloadView(APIView):
 
     def get(self, request, pk):
         job = _get_accessible_module2_job(request, pk)
-        if job.status != Module1Job.Status.SUCCESS or not job.output_zip:
+        if not job.output_available:
             raise Http404()
         file_handle = job.output_zip.open("rb")
         return FileResponse(file_handle, as_attachment=True, filename=f"module2-{job.id}.zip")
@@ -609,27 +726,40 @@ class Module2AllocateJobView(APIView):
 
     def post(self, request):
         combined = request.FILES.get("combined_summary")
-        if not combined:
-            raise ValidationError({"combined_summary": "Combined_Summary.xlsx is required."})
-        if not combined.name.lower().endswith(".xlsx"):
-            raise ValidationError({"combined_summary": "Must be an .xlsx file."})
-        _check_upload_budget([combined])
+        source = _read_combined_summary_source(request)
+        _require_exactly_one(
+            combined, source,
+            file_name="combined_summary",
+            source_name="source_job_id",
+        )
+
+        if combined:
+            if not combined.name.lower().endswith(".xlsx"):
+                raise ValidationError({"combined_summary": "Must be an .xlsx file."})
+            _check_upload_budget([combined])
+
         job = _create_job(
             request,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             input_meta={},
+            source_job=source,
+            source_artifact=(ARTIFACT_COMBINED_SUMMARY if source else ""),
         )
         job.work_dir = f"module1_jobs/{job.id}"
         job.save(update_fields=["work_dir"])
         combined_dir = init_module2_allocate_job_dirs(job)
-        dest = combined_dir / "Combined_Summary.xlsx"
-        with dest.open("wb") as outf:
-            for chunk in combined.chunks():
-                outf.write(chunk)
-        job.input_meta = {
-            "files": {"combined_summary": {"name": combined.name, "size": combined.size}}
-        }
+
+        meta_files = {}
+        if combined:
+            dest = combined_dir / "Combined_Summary.xlsx"
+            with dest.open("wb") as outf:
+                for chunk in combined.chunks():
+                    outf.write(chunk)
+            meta_files["combined_summary"] = {"name": combined.name, "size": combined.size}
+
+        job.input_meta = {"files": meta_files}
         job.save(update_fields=["input_meta"])
+
         run_module2_allocate_task.delay(str(job.id))
         return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
 
@@ -677,11 +807,19 @@ class Module2ProcessJobView(APIView):
         )
         payload_serializer.is_valid(raise_exception=True)
         payload = payload_serializer.validated_data
-        allocate_job = _get_accessible_module2_job(request, payload["allocate_job_id"])
+
+        # Same primitive as the chained allocate path: resolve the allocate
+        # job as a Combined_Summary source. This collapses two formerly
+        # separate code paths into one.
+        allocate_job = resolve_source_job(
+            request=request,
+            source_job_id=payload["allocate_job_id"],
+            artifact=ARTIFACT_COMBINED_SUMMARY,
+            field_name="allocate_job_id",
+        )
         if allocate_job.job_type != Module1Job.JobType.MODULE2_ALLOCATE:
             raise ValidationError({"allocate_job_id": "Must reference a module2 allocate job."})
-        if allocate_job.status != Module1Job.Status.SUCCESS or not allocate_job.output_zip:
-            raise ValidationError({"allocate_job_id": "Allocate job must be completed successfully."})
+
         _check_upload_budget([previous, expense])
         job = _create_job(
             request,
@@ -691,6 +829,8 @@ class Module2ProcessJobView(APIView):
                 "accounting_period": payload["accounting_period"],
                 "selected_ulr": payload["selected_ulr"],
             },
+            source_job=allocate_job,
+            source_artifact=ARTIFACT_COMBINED_SUMMARY,
         )
         job.work_dir = f"module1_jobs/{job.id}"
         job.save(update_fields=["work_dir"])
@@ -710,3 +850,63 @@ class Module2ProcessJobView(APIView):
         job.save(update_fields=["input_meta"])
         run_module2_process_task.delay(str(job.id))
         return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
+
+
+# ---------------------------------------------------------------------------
+# Source candidates (powers the picker UIs)
+# ---------------------------------------------------------------------------
+
+
+class SourceCandidatesView(APIView):
+    """GET /api/processing/source-candidates/?artifact=Combined_Summary.xlsx
+    &job_type=summary&page=1&page_size=20
+
+    Anyone with either module1.run or module2.run can list candidates.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated()]
+
+    def get(self, request):
+        if not (
+            request.user.is_superuser
+            or user_has_any_permission(
+                request.user, ["module1.run", "module2.run"], request=request
+            )
+        ):
+            raise PermissionDenied()
+
+        artifact = request.query_params.get("artifact") or ARTIFACT_COMBINED_SUMMARY
+        if artifact not in ARTIFACT_PRODUCERS:
+            raise ValidationError(
+                {"artifact": f"Unsupported artifact. Allowed: {sorted(ARTIFACT_PRODUCERS)}"}
+            )
+
+        job_type = request.query_params.get("job_type") or None
+        if job_type and job_type not in ARTIFACT_PRODUCERS[artifact]:
+            raise ValidationError(
+                {"job_type": f"Not a producer of {artifact}."}
+            )
+
+        try:
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "20"))
+        except ValueError:
+            raise ValidationError({"detail": "page and page_size must be integers."})
+
+        qs, total = list_candidate_sources(
+            request=request,
+            artifact=artifact,
+            job_type=job_type,
+            page=page,
+            page_size=page_size,
+        )
+        items = list(qs)
+        data = SourceCandidateSerializer(items, many=True).data
+        return Response({
+            "count": total,
+            "page": page,
+            "page_size": page_size,
+            "artifact": artifact,
+            "results": data,
+        })

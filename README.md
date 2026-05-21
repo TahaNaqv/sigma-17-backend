@@ -193,6 +193,7 @@ python manage.py runserver
 | `GET` | `/api/roles/` | List roles |
 | `GET` | `/api/permissions/` | List permissions |
 | `GET` | `/admin/` | Django admin |
+| `GET` | `/api/processing/source-candidates/?artifact=Combined_Summary.xlsx` | List jobs eligible to chain (`module1.run` or `module2.run`) |
 | `GET` | `/api/module1/jobs/` | List Module 1 jobs (`runhistory.view`) |
 | `POST` | `/api/module1/jobs/summary/` | Start summary job — multipart (`module1.run`) |
 | `POST` | `/api/module1/jobs/policy-upr/` | Start policy UPR job (`module1.run`) |
@@ -218,6 +219,54 @@ python manage.py runserver
 - `discount`: `[{ "time_period", "cy_discount", "py_discount" }]`
 
 ---
+
+## Chaining (Module 1 → Module 1, Module 1 → Module 2)
+
+Any endpoint that consumes `Combined_Summary.xlsx` accepts **either** a fresh
+upload or a `source_job_id` pointing at a previous successful job whose output
+ZIP contains that artifact. The chaining is a single primitive implemented in
+`processing/services/source_resolver.py` and applied uniformly across:
+
+| Consumer endpoint                                | Upload field                        | Chain field                                      | Rule              |
+|--------------------------------------------------|-------------------------------------|--------------------------------------------------|-------------------|
+| `POST /api/module2/jobs/allocate/`               | `combined_summary`                  | `source_job_id`                                  | exactly one       |
+| `POST /api/module1/jobs/uw-parameters/`          | `combined_summary`                  | `source_job_id`                                  | exactly one       |
+| `POST /api/module1/combined-summary/uw-preview/` | `combined_summary`                  | `source_job_id`                                  | exactly one       |
+| `POST /api/module1/jobs/update-reserve/`         | `combined_summary`                  | `source_job_id`                                  | at most one       |
+| `POST /api/module1/jobs/summary/`                | `existing_combined_summary`         | `existing_combined_summary_source_id`            | at most one       |
+| `POST /api/module2/jobs/process/`                | —                                   | `allocate_job_id` (chains via same primitive)    | required          |
+
+Eligible **source** job types are `summary`, `uw_parameters`, `update_reserve`,
+`module2_allocate` — any successful job whose denormalized `output_artifacts`
+field includes `Combined_Summary.xlsx`. Sources are org-scoped and owner-scoped
+for non-superusers; uniform 400 errors avoid info leaks. Lineage is enforced at
+the database via `Module1Job.source_job` (`ForeignKey('self', on_delete=PROTECT)`).
+
+`GET /api/processing/source-candidates/?artifact=Combined_Summary.xlsx&job_type=&page=&page_size=`
+powers the picker UIs in the dashboard; it returns successful, non-purged jobs
+of the producer types listed above.
+
+## Output retention
+
+`Organization.default_output_retention_days` configures when successful jobs'
+output ZIPs become eligible for the daily cleanup sweep. Per-job overrides:
+
+- `Module1Job.legal_hold = True` — sweeper skips the row indefinitely (admin action).
+- `Module1Job.output_purged_at` — set when the ZIP has been deleted; the row stays.
+
+The sweep runs as `processing.tasks.purge_expired_outputs_task` (Celery beat,
+03:15 UTC daily, batch size 500). Cascade purge of a source job + its
+descendants is exposed as an admin action on `Module1Job` and as
+`processing.tasks.cascade_purge_task`.
+
+After applying the new migration on an existing deployment, run:
+
+```bash
+python manage.py backfill_output_artifacts
+```
+
+to populate `output_artifacts` for previously successful jobs (idempotent;
+takes `--batch-size`, `--only-empty`, `--dry-run` flags).
 
 ## Module 2 payloads
 
