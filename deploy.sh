@@ -85,6 +85,9 @@ sleep 5
 log "applying migrations"
 docker-compose exec -T web python manage.py migrate --noinput
 
+log "seeding RBAC (idempotent — creates new permission keys and re-attaches role permissions)"
+docker-compose exec -T web python manage.py seed_rbac --force
+
 log "collecting static files"
 docker-compose exec -T web python manage.py collectstatic --noinput
 
