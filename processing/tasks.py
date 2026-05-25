@@ -19,6 +19,9 @@ from processing.services.retention import (
     cascade_purge as _cascade_purge,
     purge_expired_outputs as _purge_expired_outputs,
 )
+from processing.services.reserve_workbook import (
+    write_workbooks_with_overrides,
+)
 from processing.services.source_resolver import (
     ARTIFACT_COMBINED_SUMMARY,
     list_artifacts_in_zip_path,
@@ -26,12 +29,85 @@ from processing.services.source_resolver import (
     stamp_output_artifacts,
     stamp_retention,
 )
+from datasets.models import Dataset, DatasetSnapshot
+from datasets.services.engine_adapter import (
+    KIND_RECIPE,
+    write_snapshot_as_sheet,
+    write_snapshot_to_folder,
+    write_snapshot_to_named_file,
+)
 from processing.utils import (
     init_job_work_dir,
     job_input_subdir,
     job_output_dir,
     job_root,
 )
+
+
+def _materialize_job_snapshots(job: Module1Job) -> None:
+    """For each kind in `input_meta["dataset_snapshots"]`, write each
+    referenced snapshot into the engine's staging location, routed by
+    the kind's `KIND_RECIPE` (folder / named_file / named_sheet).
+
+    No-op when the job was driven by file uploads.
+    """
+    meta = job.input_meta or {}
+    snaps_by_kind = meta.get("dataset_snapshots") or {}
+    if not snaps_by_kind:
+        return
+    job_root_path = job_root(job)
+    for kind, snap_ids in snaps_by_kind.items():
+        if not snap_ids:
+            continue
+        snapshots = list(
+            DatasetSnapshot.objects.filter(
+                id__in=snap_ids, organization=job.organization
+            )
+        )
+        found = {str(s.id) for s in snapshots}
+        missing = [i for i in snap_ids if i not in found]
+        if missing:
+            raise ValueError(
+                f"Dataset snapshots missing for kind '{kind}': {missing}"
+            )
+
+        # Newly-defined kinds carry a recipe; legacy kinds (premium /
+        # claims_paid / claims_os) hit the default "folder" branch via
+        # KIND_RECIPE too.
+        recipe = KIND_RECIPE.get(kind)
+        if recipe is None:
+            # Fall back to the old behavior for unknown kinds: dump into
+            # `in/{kind}/`. Keeps the code resilient to schema drift.
+            folder = job_input_subdir(job, kind)
+            for snap in snapshots:
+                write_snapshot_to_folder(snap, folder)
+            continue
+
+        mode = recipe["mode"]
+        if mode == "folder":
+            folder = job_input_subdir(job, kind)
+            for snap in snapshots:
+                write_snapshot_to_folder(snap, folder)
+        elif mode == "named_file":
+            # Module 2 Process: Expense_CF.xlsx at a specific path with a
+            # specific sheet name the engine reads by name.
+            if kind == Dataset.Kind.EXPENSE_CF:
+                target = job_root_path / "in" / "module2" / "expense" / recipe["filename"]
+            else:
+                target = job_root_path / recipe["filename"]
+            # Only one snapshot makes sense for a named_file kind — if
+            # the user attaches multiple, the last one wins (matches the
+            # "one expense_cf per job" semantics).
+            for snap in snapshots:
+                write_snapshot_to_named_file(snap, target, sheet_name=recipe["sheet_name"])
+        elif mode == "named_sheet":
+            # Module 2 Process: Previous_Period.xlsx with two sheets
+            # (LIC_BOP, UPR-DAC_BOP) contributed by two different kinds.
+            target = job_root_path / "in" / "module2" / "previous" / recipe["filename"]
+            for snap in snapshots:
+                write_snapshot_as_sheet(snap, target, sheet_name=recipe["sheet_name"])
+        else:
+            raise ValueError(f"Unknown KIND_RECIPE mode '{mode}' for kind '{kind}'.")
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +227,10 @@ def run_module1_summary_task(self, job_id: str) -> None:
             )
             (out_dir / "Combined_Summary.xlsx").write_bytes(cs_bytes)
 
+        # Dataset-driven kinds: render each snapshot as an xlsx into the
+        # engine's staging folder. File-driven kinds are already populated.
+        _materialize_job_snapshots(job)
+
         run_generate_summary(
             meta["exp_start"],
             meta["exp_end"],
@@ -183,6 +263,7 @@ def run_module1_policy_upr_task(self, job_id: str) -> None:
     out_dir = job_output_dir(job)
     try:
         meta = job.input_meta or {}
+        _materialize_job_snapshots(job)
         run_policy_level_upr(
             meta["bop"],
             meta["eop"],
@@ -212,6 +293,24 @@ def run_module1_update_reserve_task(self, job_id: str) -> None:
     staging.mkdir(parents=True, exist_ok=True)
     out_dir = job_output_dir(job)
     try:
+        meta = job.input_meta or {}
+        cdf_overrides = meta.get("cdf_overrides")
+
+        # Excel-free path: when the user submitted CDF overrides instead
+        # of uploaded reserve files, materialize the source Summary
+        # job's reserve workbooks (with overrides applied to Selected
+        # CDF rows) into the engine's staging dir.
+        if cdf_overrides is not None:
+            if not job.source_job_id:
+                raise ValueError(
+                    "Update reserve with cdf_overrides requires a source job."
+                )
+            write_workbooks_with_overrides(
+                source_job=job.source_job,
+                overrides_by_filename=cdf_overrides,
+                dest_folder=staging,
+            )
+
         # If chained, drop the source Combined_Summary into staging so the
         # engine sees it the same way it would have seen an uploaded file.
         if job.source_job_id:
@@ -340,6 +439,12 @@ def run_module2_process_task(self, job_id: str) -> None:
         meta = job.input_meta or {}
         selected_ulr = meta.get("selected_ulr") or []
         accounting_period = int(meta.get("accounting_period"))
+
+        # Dataset-driven kinds (Expense CF, Previous Period LIC/UPR):
+        # materialize the user's snapshots into the engine's specific
+        # named paths via KIND_RECIPE. File-upload kinds are already on
+        # disk from the view.
+        _materialize_job_snapshots(job)
 
         # The process task is always chained off an allocate job; the view
         # sets source_job to the allocate. Read Combined_Summary out of that

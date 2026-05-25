@@ -19,6 +19,14 @@ urlpatterns = [
     path("module1/jobs/<uuid:pk>/output/files/", views.Module1JobOutputFilesView.as_view()),
     path("module1/jobs/<uuid:pk>/output/sheets/", views.Module1JobOutputSheetsView.as_view()),
     path("module1/jobs/<uuid:pk>/output/rows/", views.Module1JobOutputRowsView.as_view()),
+    path(
+        "module1/jobs/<uuid:pk>/reserve-workbooks/",
+        views.Module1ReserveWorkbooksView.as_view(),
+    ),
+    path(
+        "module1/jobs/<uuid:pk>/reserve-workbooks/<path:filename>/cdf/",
+        views.Module1ReserveWorkbookCdfView.as_view(),
+    ),
     path("module2/jobs/", views.Module2JobListView.as_view()),
     path("module2/jobs/allocate/", views.Module2AllocateJobView.as_view()),
     path("module2/jobs/process/", views.Module2ProcessJobView.as_view()),

@@ -17,6 +17,8 @@ from accounts.permissions import (
     user_has_any_permission,
     user_has_role,
 )
+from datasets.models import Dataset
+from datasets.services.snapshots import create_snapshot
 from tenants.permissions import get_request_org
 
 from .models import Module1Job
@@ -35,6 +37,10 @@ from .serializers import (
     OutputSheetPageResponseSerializer,
     OutputSheetsResponseSerializer,
     SourceCandidateSerializer,
+)
+from .services.reserve_workbook import (
+    list_reserve_workbooks,
+    read_workbook_cdfs,
 )
 from .services.source_resolver import (
     ARTIFACT_COMBINED_SUMMARY,
@@ -207,6 +213,78 @@ def _require_at_most_one(file_obj, source_job, *, file_name, source_name):
         raise ValidationError(
             {"detail": f"Provide either {file_name} or {source_name}, not both."}
         )
+
+
+# ---------------------------------------------------------------------------
+# Dataset-driven input helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_dataset_ids(raw: str, field_name: str) -> list[str]:
+    """Parse a comma-separated UUID string into a list. Empty → []."""
+    if not raw:
+        return []
+    items = [s.strip() for s in str(raw).split(",") if s.strip()]
+    if not items:
+        return []
+    import uuid as _uuid
+
+    out = []
+    for s in items:
+        try:
+            out.append(str(_uuid.UUID(s)))
+        except ValueError as exc:
+            raise ValidationError(
+                {field_name: f"'{s}' is not a valid UUID."}
+            ) from exc
+    return out
+
+
+def _resolve_datasets(
+    request,
+    *,
+    ids: list[str],
+    expected_kind: str,
+    field_name: str,
+) -> list[Dataset]:
+    """Resolve a list of dataset UUIDs to Dataset objects, scoped to the
+    active org and required to match `expected_kind`. Raises on any miss."""
+    if not ids:
+        return []
+    org = get_request_org(request)
+    qs = Dataset.objects.filter(id__in=ids)
+    if not request.user.is_superuser:
+        if org is None:
+            raise PermissionDenied("An active organization context is required.")
+        qs = qs.filter(organization=org)
+    elif org is not None:
+        # Superuser with an active org: still scope to that org for safety.
+        qs = qs.filter(organization=org)
+    found = {str(d.id): d for d in qs}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise ValidationError(
+            {field_name: f"Datasets not found in this organization: {missing}"}
+        )
+    wrong_kind = [
+        i for i, d in found.items() if d.kind != expected_kind
+    ]
+    if wrong_kind:
+        raise ValidationError(
+            {field_name: f"Expected kind '{expected_kind}', got mismatched: {wrong_kind}"}
+        )
+    # Preserve user-supplied order.
+    return [found[i] for i in ids]
+
+
+def _snapshot_for_job(datasets: list[Dataset], job: Module1Job) -> list[str]:
+    """Create a snapshot for each dataset, linked to the job. Returns
+    the snapshot UUIDs (as strings) for storage in `input_meta`."""
+    out = []
+    for ds in datasets:
+        snap = create_snapshot(dataset=ds, consumer_job=job)
+        out.append(str(snap.id))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -431,14 +509,56 @@ class Module1SummaryJobView(APIView):
             request, field_name="existing_combined_summary_source_id"
         )
 
-        if not premium:
-            raise ValidationError({"premium": "At least one premium file is required."})
-        if not claims_paid:
-            raise ValidationError(
-                {"claims_paid": "At least one claims paid file is required."}
-            )
-        if not claims_os:
-            raise ValidationError({"claims_os": "At least one claims OS file is required."})
+        # Dataset-driven inputs — each kind may come from datasets instead
+        # of files. The view requires exactly one of (files, dataset_ids)
+        # per kind so users can mix-and-match across kinds (e.g. premium
+        # from a dataset, claims still from Excel).
+        premium_ds_ids = _parse_dataset_ids(
+            request.POST.get("premium_dataset_ids", ""), "premium_dataset_ids"
+        )
+        claims_paid_ds_ids = _parse_dataset_ids(
+            request.POST.get("claims_paid_dataset_ids", ""),
+            "claims_paid_dataset_ids",
+        )
+        claims_os_ds_ids = _parse_dataset_ids(
+            request.POST.get("claims_os_dataset_ids", ""),
+            "claims_os_dataset_ids",
+        )
+
+        def _need_one(files, ds_ids, *, files_label, ds_label):
+            if files and ds_ids:
+                raise ValidationError(
+                    {"detail": f"Provide {files_label} or {ds_label}, not both."}
+                )
+            if not files and not ds_ids:
+                raise ValidationError(
+                    {files_label: f"Provide {files_label} or {ds_label}."}
+                )
+
+        _need_one(premium, premium_ds_ids,
+                  files_label="premium", ds_label="premium_dataset_ids")
+        _need_one(claims_paid, claims_paid_ds_ids,
+                  files_label="claims_paid", ds_label="claims_paid_dataset_ids")
+        _need_one(claims_os, claims_os_ds_ids,
+                  files_label="claims_os", ds_label="claims_os_dataset_ids")
+
+        # Resolve datasets up-front so a bad id fails before the job is
+        # created. Snapshots come after job creation (FK target).
+        premium_datasets = _resolve_datasets(
+            request, ids=premium_ds_ids,
+            expected_kind=Dataset.Kind.PREMIUM,
+            field_name="premium_dataset_ids",
+        )
+        claims_paid_datasets = _resolve_datasets(
+            request, ids=claims_paid_ds_ids,
+            expected_kind=Dataset.Kind.CLAIMS_PAID,
+            field_name="claims_paid_dataset_ids",
+        )
+        claims_os_datasets = _resolve_datasets(
+            request, ids=claims_os_ds_ids,
+            expected_kind=Dataset.Kind.CLAIMS_OS,
+            field_name="claims_os_dataset_ids",
+        )
 
         _require_at_most_one(
             existing, existing_source,
@@ -447,7 +567,8 @@ class Module1SummaryJobView(APIView):
         )
 
         extra = [existing] if existing else []
-        _check_upload_budget(premium, claims_paid, claims_os, extra)
+        upload_groups = [g for g in (premium, claims_paid, claims_os) if g]
+        _check_upload_budget(*upload_groups, extra)
 
         job = _create_job(
             request,
@@ -466,13 +587,34 @@ class Module1SummaryJobView(APIView):
         job.save(update_fields=["work_dir"])
         init_job_work_dir(job)
 
-        meta_files = {
-            "premium": _save_xlsx_list(job_input_subdir(job, "premium"), premium),
-            "claims_paid": _save_xlsx_list(
+        # File-driven kinds get saved straight to staging (existing path).
+        meta_files = {}
+        if premium:
+            meta_files["premium"] = _save_xlsx_list(
+                job_input_subdir(job, "premium"), premium
+            )
+        if claims_paid:
+            meta_files["claims_paid"] = _save_xlsx_list(
                 job_input_subdir(job, "claims_paid"), claims_paid
-            ),
-            "claims_os": _save_xlsx_list(job_input_subdir(job, "claims_os"), claims_os),
-        }
+            )
+        if claims_os:
+            meta_files["claims_os"] = _save_xlsx_list(
+                job_input_subdir(job, "claims_os"), claims_os
+            )
+
+        # Dataset-driven kinds get snapshotted now so the engine reads
+        # the row payload captured at submit time, not at task pickup.
+        dataset_snapshots = {}
+        if premium_datasets:
+            dataset_snapshots["premium"] = _snapshot_for_job(premium_datasets, job)
+        if claims_paid_datasets:
+            dataset_snapshots["claims_paid"] = _snapshot_for_job(
+                claims_paid_datasets, job
+            )
+        if claims_os_datasets:
+            dataset_snapshots["claims_os"] = _snapshot_for_job(
+                claims_os_datasets, job
+            )
 
         if existing:
             if not existing.name.lower().endswith(".xlsx"):
@@ -489,7 +631,11 @@ class Module1SummaryJobView(APIView):
                 "size": existing.size,
             }
 
-        job.input_meta = {**job.input_meta, "files": meta_files}
+        job.input_meta = {
+            **job.input_meta,
+            "files": meta_files,
+            "dataset_snapshots": dataset_snapshots,
+        }
         job.save(update_fields=["input_meta"])
 
         run_module1_summary_task.delay(str(job.id))
@@ -508,9 +654,27 @@ class Module1PolicyUprJobView(APIView):
         bop = _parse_dd_mm_yyyy("bop", request.POST.get("bop", ""))
         eop = _parse_dd_mm_yyyy("eop", request.POST.get("eop", ""))
         premium = request.FILES.getlist("premium")
-        if not premium:
-            raise ValidationError({"premium": "At least one premium file is required."})
-        _check_upload_budget(premium)
+        premium_ds_ids = _parse_dataset_ids(
+            request.POST.get("premium_dataset_ids", ""), "premium_dataset_ids"
+        )
+
+        if premium and premium_ds_ids:
+            raise ValidationError(
+                {"detail": "Provide premium files or premium_dataset_ids, not both."}
+            )
+        if not premium and not premium_ds_ids:
+            raise ValidationError(
+                {"premium": "Provide premium files or premium_dataset_ids."}
+            )
+
+        premium_datasets = _resolve_datasets(
+            request, ids=premium_ds_ids,
+            expected_kind=Dataset.Kind.PREMIUM,
+            field_name="premium_dataset_ids",
+        )
+
+        if premium:
+            _check_upload_budget(premium)
 
         job = _create_job(
             request,
@@ -522,10 +686,20 @@ class Module1PolicyUprJobView(APIView):
         job.save(update_fields=["work_dir"])
         init_job_work_dir(job)
 
-        meta_files = {
-            "premium": _save_xlsx_list(job_input_subdir(job, "premium"), premium),
+        meta_files = {}
+        dataset_snapshots = {}
+        if premium:
+            meta_files["premium"] = _save_xlsx_list(
+                job_input_subdir(job, "premium"), premium
+            )
+        if premium_datasets:
+            dataset_snapshots["premium"] = _snapshot_for_job(premium_datasets, job)
+
+        job.input_meta = {
+            **job.input_meta,
+            "files": meta_files,
+            "dataset_snapshots": dataset_snapshots,
         }
-        job.input_meta = {**job.input_meta, "files": meta_files}
         job.save(update_fields=["input_meta"])
 
         run_module1_policy_upr_task.delay(str(job.id))
@@ -545,8 +719,38 @@ class Module1UpdateReserveJobView(APIView):
         combined = request.FILES.get("combined_summary")
         combined_source = _read_combined_summary_source(request)
 
-        if not reserve_files:
-            raise ValidationError({"reserve": "At least one reserve workbook is required."})
+        # Excel-free path: when the user provides `cdf_overrides`, the
+        # reserve workbooks come from `source_job_id`'s output ZIP and
+        # we apply the overrides to the Selected CDF rows before running
+        # the engine. Mutually-exclusive with file upload.
+        cdf_overrides_raw = request.POST.get("cdf_overrides")
+        cdf_overrides = None
+        if cdf_overrides_raw:
+            try:
+                cdf_overrides = json.loads(cdf_overrides_raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(
+                    {"cdf_overrides": "Invalid JSON."}
+                ) from exc
+            if not isinstance(cdf_overrides, dict):
+                raise ValidationError(
+                    {"cdf_overrides": "Must be a JSON object."}
+                )
+
+        if cdf_overrides is not None:
+            if reserve_files:
+                raise ValidationError(
+                    {"detail": "Provide reserve files or cdf_overrides, not both."}
+                )
+            if combined_source is None:
+                raise ValidationError(
+                    {"source_job_id": "Required when supplying cdf_overrides."}
+                )
+        else:
+            if not reserve_files:
+                raise ValidationError(
+                    {"reserve": "Provide reserve files or cdf_overrides + source_job_id."}
+                )
 
         _require_at_most_one(
             combined, combined_source,
@@ -555,7 +759,10 @@ class Module1UpdateReserveJobView(APIView):
         )
 
         extra = [combined] if combined else []
-        _check_upload_budget(reserve_files, extra)
+        if reserve_files:
+            _check_upload_budget(reserve_files, extra)
+        elif combined:
+            _check_upload_budget(extra)
 
         job = _create_job(
             request,
@@ -569,9 +776,9 @@ class Module1UpdateReserveJobView(APIView):
         job.save(update_fields=["work_dir"])
         staging = init_update_reserve_job_dirs(job)
 
-        meta_files = {
-            "reserve": _save_xlsx_list(staging, reserve_files),
-        }
+        meta_files = {}
+        if reserve_files:
+            meta_files["reserve"] = _save_xlsx_list(staging, reserve_files)
         if combined:
             if not combined.name.lower().endswith(".xlsx"):
                 raise ValidationError(
@@ -586,13 +793,64 @@ class Module1UpdateReserveJobView(APIView):
                 "size": combined.size,
             }
 
-        job.input_meta = {"files": meta_files}
+        new_meta = {"files": meta_files}
+        if cdf_overrides is not None:
+            new_meta["cdf_overrides"] = cdf_overrides
+        job.input_meta = new_meta
         job.save(update_fields=["input_meta"])
 
         run_module1_update_reserve_task.delay(str(job.id))
         return Response(
             Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED
         )
+
+
+# ---------------------------------------------------------------------------
+# Reserve workbook inspection — powers the Excel-free CDF editor UI.
+# ---------------------------------------------------------------------------
+
+
+class Module1ReserveWorkbooksView(APIView):
+    """GET /api/module1/jobs/{pk}/reserve-workbooks/
+
+    Lists the parseable reserve workbooks in a Summary-style job's
+    output ZIP. The caller uses this to populate a per-workbook CDF
+    editor before submitting an Update Reserve job.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def get(self, request, pk):
+        job = _get_accessible_job(request, pk)
+        if not job.output_available:
+            raise Http404()
+        try:
+            workbooks = list_reserve_workbooks(job)
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response({"job_id": str(job.id), "workbooks": workbooks})
+
+
+class Module1ReserveWorkbookCdfView(APIView):
+    """GET /api/module1/jobs/{pk}/reserve-workbooks/{filename}/cdf/
+
+    Reads the Selected CDF row for both triangle sheets of one reserve
+    workbook. The response shape is what the editor binds to directly.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def get(self, request, pk, filename):
+        job = _get_accessible_job(request, pk)
+        if not job.output_available:
+            raise Http404()
+        try:
+            payload = read_workbook_cdfs(job, filename)
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(payload)
 
 
 class Module1CombinedSummaryUwPreviewView(APIView):
@@ -790,10 +1048,56 @@ class Module2ProcessJobView(APIView):
         selected_ulr_raw = request.POST.get("selected_ulr", "[]")
         previous = request.FILES.get("previous_period")
         expense = request.FILES.get("expense_cf")
-        if not previous or not expense:
-            raise ValidationError({"detail": "previous_period and expense_cf are required."})
-        if not previous.name.lower().endswith(".xlsx") or not expense.name.lower().endswith(".xlsx"):
+
+        # Excel-free inputs (Phase 6): any of the three workbook slots
+        # may be supplied as datasets instead of file uploads.
+        expense_cf_ds_id = (
+            request.POST.get("expense_cf_dataset_id") or ""
+        ).strip()
+        previous_lic_ds_id = (
+            request.POST.get("previous_period_lic_dataset_id") or ""
+        ).strip()
+        previous_upr_ds_id = (
+            request.POST.get("previous_period_upr_dataset_id") or ""
+        ).strip()
+
+        # XOR per slot. Expense: one xlsx OR one Expense CF dataset.
+        # Previous Period: one xlsx OR (LIC dataset AND UPR dataset).
+        # File and dataset cannot both be provided for the same slot.
+        if expense and expense_cf_ds_id:
+            raise ValidationError(
+                {"detail": "Provide expense_cf or expense_cf_dataset_id, not both."}
+            )
+        if not expense and not expense_cf_ds_id:
+            raise ValidationError(
+                {"expense_cf": "Provide expense_cf or expense_cf_dataset_id."}
+            )
+        previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id)
+        if previous and previous_via_dataset:
+            raise ValidationError({
+                "detail": (
+                    "Provide previous_period or previous_period_{lic,upr}_dataset_id, "
+                    "not both."
+                )
+            })
+        if not previous and not previous_via_dataset:
+            raise ValidationError(
+                {"previous_period": "Provide previous_period file or both LIC+UPR dataset ids."}
+            )
+        if previous_via_dataset and not (previous_lic_ds_id and previous_upr_ds_id):
+            raise ValidationError({
+                "detail": (
+                    "Both previous_period_lic_dataset_id AND previous_period_upr_dataset_id "
+                    "are required for the dataset path."
+                )
+            })
+
+        # File checks (only when files are actually being submitted)
+        if previous and not previous.name.lower().endswith(".xlsx"):
             raise ValidationError({"detail": "Only .xlsx files are supported."})
+        if expense and not expense.name.lower().endswith(".xlsx"):
+            raise ValidationError({"detail": "Only .xlsx files are supported."})
+
         try:
             selected_ulr = json.loads(selected_ulr_raw)
         except json.JSONDecodeError as exc:
@@ -820,7 +1124,29 @@ class Module2ProcessJobView(APIView):
         if allocate_job.job_type != Module1Job.JobType.MODULE2_ALLOCATE:
             raise ValidationError({"allocate_job_id": "Must reference a module2 allocate job."})
 
-        _check_upload_budget([previous, expense])
+        # Resolve dataset ids up-front so a bad id fails before job creation.
+        expense_datasets = _resolve_datasets(
+            request,
+            ids=[expense_cf_ds_id] if expense_cf_ds_id else [],
+            expected_kind=Dataset.Kind.EXPENSE_CF,
+            field_name="expense_cf_dataset_id",
+        )
+        previous_lic_datasets = _resolve_datasets(
+            request,
+            ids=[previous_lic_ds_id] if previous_lic_ds_id else [],
+            expected_kind=Dataset.Kind.PREVIOUS_PERIOD_LIC,
+            field_name="previous_period_lic_dataset_id",
+        )
+        previous_upr_datasets = _resolve_datasets(
+            request,
+            ids=[previous_upr_ds_id] if previous_upr_ds_id else [],
+            expected_kind=Dataset.Kind.PREVIOUS_PERIOD_UPR,
+            field_name="previous_period_upr_dataset_id",
+        )
+
+        upload_files = [f for f in (previous, expense) if f]
+        if upload_files:
+            _check_upload_budget(upload_files)
         job = _create_job(
             request,
             job_type=Module1Job.JobType.MODULE2_PROCESS,
@@ -835,17 +1161,34 @@ class Module2ProcessJobView(APIView):
         job.work_dir = f"module1_jobs/{job.id}"
         job.save(update_fields=["work_dir"])
         previous_dir, expense_dir = init_module2_process_job_dirs(job)
-        with (previous_dir / "Previous_Period.xlsx").open("wb") as outf:
-            for chunk in previous.chunks():
-                outf.write(chunk)
-        with (expense_dir / "Expense_CF.xlsx").open("wb") as outf:
-            for chunk in expense.chunks():
-                outf.write(chunk)
+
+        meta_files = {}
+        if previous:
+            with (previous_dir / "Previous_Period.xlsx").open("wb") as outf:
+                for chunk in previous.chunks():
+                    outf.write(chunk)
+            meta_files["previous_period"] = {"name": previous.name, "size": previous.size}
+        if expense:
+            with (expense_dir / "Expense_CF.xlsx").open("wb") as outf:
+                for chunk in expense.chunks():
+                    outf.write(chunk)
+            meta_files["expense_cf"] = {"name": expense.name, "size": expense.size}
+
+        dataset_snapshots = {}
+        if expense_datasets:
+            dataset_snapshots["expense_cf"] = _snapshot_for_job(expense_datasets, job)
+        if previous_lic_datasets:
+            dataset_snapshots["previous_period_lic"] = _snapshot_for_job(
+                previous_lic_datasets, job
+            )
+        if previous_upr_datasets:
+            dataset_snapshots["previous_period_upr"] = _snapshot_for_job(
+                previous_upr_datasets, job
+            )
+
         meta = job.input_meta or {}
-        meta["files"] = {
-            "previous_period": {"name": previous.name, "size": previous.size},
-            "expense_cf": {"name": expense.name, "size": expense.size},
-        }
+        meta["files"] = meta_files
+        meta["dataset_snapshots"] = dataset_snapshots
         job.input_meta = meta
         job.save(update_fields=["input_meta"])
         run_module2_process_task.delay(str(job.id))

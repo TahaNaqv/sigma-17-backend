@@ -32,6 +32,7 @@ urlpatterns = [
     path('api/', include('accounts.urls')),
     path('api/', include('tenants.urls')),
     path('api/', include('processing.urls')),
+    path('api/', include('datasets.urls')),
     path('api/auth/me/', auth_me),
     path('api/auth/profile/', profile),
     path('api/auth/change-password/', change_password),

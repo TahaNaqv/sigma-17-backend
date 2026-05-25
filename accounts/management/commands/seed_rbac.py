@@ -38,6 +38,11 @@ PERMISSIONS = [
     # Files
     ("files.upload", "Upload Files", "Files", "Upload input files"),
     ("files.view", "View File List", "Files", "View list of input and output files"),
+    # Datasets (UI-driven data entry — replaces or supplements Excel upload)
+    ("datasets.view", "View Datasets", "Datasets", "View datasets and rows"),
+    ("datasets.edit", "Edit Datasets", "Datasets", "Create, edit, and add rows to datasets"),
+    ("datasets.lock", "Lock Datasets", "Datasets", "Lock a dataset so its rows become read-only"),
+    ("datasets.delete", "Delete Datasets", "Datasets", "Delete datasets and their rows"),
     # Processing
     ("module1.run", "Run Module 1", "Processing", "Run Module 1 processing"),
     ("module2.run", "Run Module 2", "Processing", "Run Module 2 processing"),
@@ -59,18 +64,22 @@ ROLE_PERMISSIONS = {
         "roles.view",
         "memberships.view", "memberships.manage",
         "files.upload", "files.view", "module1.run", "module2.run",
+        "datasets.view", "datasets.edit", "datasets.lock", "datasets.delete",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
     "Actuary": [
         "files.upload", "files.view", "module1.run", "module2.run",
+        "datasets.view", "datasets.edit", "datasets.lock", "datasets.delete",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
     "Analyst": [
         "files.upload", "files.view", "module1.run", "module2.run",
+        "datasets.view", "datasets.edit",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
     "Viewer": [
-        "files.view", "outputs.download", "dashboard.view", "runhistory.view",
+        "files.view", "datasets.view",
+        "outputs.download", "dashboard.view", "runhistory.view",
     ],
 }
 

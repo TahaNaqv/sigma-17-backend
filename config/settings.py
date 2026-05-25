@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'tenants',
     'accounts',
     'processing',
+    'datasets',
 ]
 
 MIDDLEWARE = [
