@@ -25,6 +25,7 @@ Tenant isolation: all queries filter by request.user's active org.
 
 from django.db import IntegrityError, transaction
 from django.db.models import Max
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -50,6 +51,11 @@ from .serializers import (
     serializer_for_kind,
 )
 from .services.excel_import import ExcelImportError, import_excel_to_dataset
+from .services.templates import TEMPLATES, render_template
+
+XLSX_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -564,3 +570,21 @@ class DatasetSnapshotsView(generics.ListAPIView):
         dataset = _get_owned_dataset(self.request, self.kwargs["pk"])
         self.check_object_permissions(self.request, dataset)
         return DatasetSnapshot.objects.filter(dataset=dataset).order_by("-created_at")
+
+
+class DatasetTemplateDownloadView(APIView):
+    """GET /api/datasets/templates/{key}/ — download an empty .xlsx upload
+    template for `key` (a dataset kind, the composite `previous_period`, or
+    `reserve`). Templates carry no tenant data, so any authenticated user
+    may fetch them."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, key):
+        tpl = TEMPLATES.get(key)
+        if tpl is None:
+            raise Http404("Unknown template")
+        content = render_template(key)
+        response = HttpResponse(content, content_type=XLSX_CONTENT_TYPE)
+        response["Content-Disposition"] = f'attachment; filename="{tpl.filename}"'
+        return response

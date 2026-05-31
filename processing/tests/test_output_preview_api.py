@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Permission, Role
 from processing.models import Module1Job
+from tenants.models import Membership, Organization
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="sigma17-test-media-")
 
@@ -54,7 +55,13 @@ def _zip_with_wide_xlsx(xlsx_name="Wide.xlsx") -> bytes:
     return zbuf.getvalue()
 
 
-def _give_role_with_permissions(user: User, role_name: str, perm_keys: list[str]) -> None:
+def _give_role_with_permissions(
+    user: User, role_name: str, perm_keys: list[str], org: Organization
+) -> None:
+    """Assign a permission role to `user` within `org`. Roles are scoped to an
+    organization via tenants.Membership in the multi-tenant model."""
+    user.profile.active_organization = org
+    user.profile.save(update_fields=["active_organization"])
     role = Role.objects.create(name=role_name)
     for key in perm_keys:
         perm, _ = Permission.objects.get_or_create(
@@ -62,10 +69,11 @@ def _give_role_with_permissions(user: User, role_name: str, perm_keys: list[str]
             defaults={"name": key, "module": "Processing", "description": ""},
         )
         role.permissions.add(perm)
-    user.profile.roles.add(role)
+    membership = Membership.objects.create(user=user, organization=org, status="active")
+    membership.roles.add(role)
 
 
-@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
 class Module1OutputPreviewApiTests(TestCase):
     @classmethod
     def tearDownClass(cls):
@@ -73,23 +81,32 @@ class Module1OutputPreviewApiTests(TestCase):
         shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
 
     def setUp(self):
+        # owner and other live in separate orgs so the non-owner read is
+        # blocked via org isolation.
+        self.org = Organization.objects.create(name="owner-org")
+        self.other_org = Organization.objects.create(name="other-org")
         self.owner = User.objects.create_user(
             username="owner",
             email="owner@example.com",
             password="testpass123",
         )
-        _give_role_with_permissions(self.owner, "Owner Role", ["runhistory.view"])
+        _give_role_with_permissions(
+            self.owner, "Owner Role", ["runhistory.view"], self.org
+        )
         self.other = User.objects.create_user(
             username="other",
             email="other@example.com",
             password="testpass123",
         )
-        _give_role_with_permissions(self.other, "Other Role", ["runhistory.view"])
+        _give_role_with_permissions(
+            self.other, "Other Role", ["runhistory.view"], self.other_org
+        )
         self.client = APIClient()
         self.client.force_authenticate(user=self.owner)
 
         self.job = Module1Job.objects.create(
             user=self.owner,
+            organization=self.org,
             job_type=Module1Job.JobType.SUMMARY,
             status=Module1Job.Status.SUCCESS,
             input_meta={},
@@ -202,6 +219,7 @@ class Module1OutputPreviewApiTests(TestCase):
     def test_output_preview_404_when_output_not_ready(self):
         job2 = Module1Job.objects.create(
             user=self.owner,
+            organization=self.org,
             job_type=Module1Job.JobType.SUMMARY,
             status=Module1Job.Status.RUNNING,
             input_meta={},

@@ -2,22 +2,44 @@
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import Permission, Role
 from module1_engine.tests.test_uw_patch import _minimal_combined_summary_bytes
+from tenants.models import Membership, Organization
 
 
+def _give_role_with_permissions(
+    user: User, role_name: str, perm_keys: list[str], org: Organization
+) -> None:
+    """Assign a permission role to `user` within `org`. Roles are scoped to an
+    organization via tenants.Membership in the multi-tenant model."""
+    user.profile.active_organization = org
+    user.profile.save(update_fields=["active_organization"])
+    role = Role.objects.create(name=role_name)
+    for key in perm_keys:
+        perm, _ = Permission.objects.get_or_create(
+            key=key,
+            defaults={"name": key, "module": "Processing", "description": ""},
+        )
+        role.permissions.add(perm)
+    membership = Membership.objects.create(user=user, organization=org, status="active")
+    membership.roles.add(role)
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
 class UwPreviewApiTests(TestCase):
     def setUp(self):
+        self.org = Organization.objects.create(name="uw-org")
         self.user = User.objects.create_user(
             username="uwtest",
             email="uwtest@example.com",
             password="testpass123",
         )
-        role = Role.objects.create(name="Super Admin")
-        self.user.profile.roles.add(role)
+        _give_role_with_permissions(
+            self.user, "Module1 Runner", ["module1.run", "runhistory.view"], self.org
+        )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
@@ -49,17 +71,9 @@ class UwPreviewApiTests(TestCase):
             email="nom1@example.com",
             password="testpass123",
         )
-        role = Role.objects.create(name="Run History Only")
-        perm, _ = Permission.objects.get_or_create(
-            key="runhistory.view",
-            defaults={
-                "name": "View run history",
-                "module": "Processing",
-                "description": "",
-            },
+        _give_role_with_permissions(
+            user, "Run History Only", ["runhistory.view"], self.org
         )
-        role.permissions.add(perm)
-        user.profile.roles.add(role)
         client = APIClient()
         client.force_authenticate(user=user)
         res = client.post("/api/module1/combined-summary/uw-preview/", {})
@@ -71,17 +85,9 @@ class UwPreviewApiTests(TestCase):
             email="nom1b@example.com",
             password="testpass123",
         )
-        role = Role.objects.create(name="Run History Only B")
-        perm, _ = Permission.objects.get_or_create(
-            key="runhistory.view",
-            defaults={
-                "name": "View run history",
-                "module": "Processing",
-                "description": "",
-            },
+        _give_role_with_permissions(
+            user, "Run History Only B", ["runhistory.view"], self.org
         )
-        role.permissions.add(perm)
-        user.profile.roles.add(role)
         raw = _minimal_combined_summary_bytes()
         upload = SimpleUploadedFile(
             "Combined_Summary.xlsx",

@@ -5,6 +5,10 @@ from . import views
 urlpatterns = [
     path("datasets/", views.DatasetListCreateView.as_view()),
     path("datasets/import-excel/", views.DatasetExcelImportView.as_view()),
+    path(
+        "datasets/templates/<str:key>/",
+        views.DatasetTemplateDownloadView.as_view(),
+    ),
     path("datasets/<uuid:pk>/", views.DatasetDetailView.as_view()),
     path("datasets/<uuid:pk>/lock/", views.DatasetLockView.as_view()),
     path("datasets/<uuid:pk>/clone/", views.DatasetCloneView.as_view()),

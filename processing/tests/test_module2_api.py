@@ -12,11 +12,18 @@ from rest_framework.test import APIClient
 
 from accounts.models import Permission, Role
 from processing.models import Module1Job
+from tenants.models import Membership, Organization
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="sigma17-test-media-module2-")
 
 
-def _give_role_with_permissions(user: User, role_name: str, perm_keys: list[str]) -> None:
+def _give_role_with_permissions(
+    user: User, role_name: str, perm_keys: list[str], org: Organization
+) -> None:
+    """Assign a permission role to `user` within `org`. Roles are scoped to an
+    organization via tenants.Membership in the multi-tenant model."""
+    user.profile.active_organization = org
+    user.profile.save(update_fields=["active_organization"])
     role = Role.objects.create(name=role_name)
     for key in perm_keys:
         perm, _ = Permission.objects.get_or_create(
@@ -24,7 +31,8 @@ def _give_role_with_permissions(user: User, role_name: str, perm_keys: list[str]
             defaults={"name": key, "module": "Processing", "description": ""},
         )
         role.permissions.add(perm)
-    user.profile.roles.add(role)
+    membership = Membership.objects.create(user=user, organization=org, status="active")
+    membership.roles.add(role)
 
 
 def _xlsx_with_sheet(name: str) -> bytes:
@@ -45,7 +53,7 @@ def _zip_with_xlsx(name: str = "output.xlsx") -> bytes:
     return buf.getvalue()
 
 
-@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
 class Module2ApiTests(TestCase):
     @classmethod
     def tearDownClass(cls):
@@ -53,16 +61,22 @@ class Module2ApiTests(TestCase):
         shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
 
     def setUp(self):
+        # self.user and self.viewer share an org; self.other is in a separate
+        # org so the "owner-scoped" assertions hold via org isolation.
+        self.org = Organization.objects.create(name="m2-org")
+        self.other_org = Organization.objects.create(name="m2-other-org")
         self.user = User.objects.create_user(username="m2", password="testpass123")
         _give_role_with_permissions(
-            self.user, "Module2 Runner", ["module2.run", "runhistory.view"]
+            self.user, "Module2 Runner", ["module2.run", "runhistory.view"], self.org
         )
         self.other = User.objects.create_user(username="other", password="testpass123")
         _give_role_with_permissions(
-            self.other, "Other Runner", ["module2.run", "runhistory.view"]
+            self.other, "Other Runner", ["module2.run", "runhistory.view"], self.other_org
         )
         self.viewer = User.objects.create_user(username="viewer", password="testpass123")
-        _give_role_with_permissions(self.viewer, "Viewer", ["runhistory.view"])
+        _give_role_with_permissions(
+            self.viewer, "Viewer", ["runhistory.view"], self.org
+        )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
@@ -89,6 +103,7 @@ class Module2ApiTests(TestCase):
     def test_list_returns_only_module2_jobs(self):
         Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.PENDING,
             work_dir="module1_jobs/a",
@@ -96,6 +111,7 @@ class Module2ApiTests(TestCase):
         )
         Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.SUMMARY,
             status=Module1Job.Status.PENDING,
             work_dir="module1_jobs/b",
@@ -109,6 +125,7 @@ class Module2ApiTests(TestCase):
     def test_unified_processing_history_returns_mixed_jobs(self):
         Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.PENDING,
             work_dir="module1_jobs/u1",
@@ -116,6 +133,7 @@ class Module2ApiTests(TestCase):
         )
         Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.SUMMARY,
             status=Module1Job.Status.PENDING,
             work_dir="module1_jobs/u2",
@@ -131,6 +149,7 @@ class Module2ApiTests(TestCase):
     def test_unified_processing_history_is_owner_scoped(self):
         Module1Job.objects.create(
             user=self.other,
+            organization=self.other_org,
             job_type=Module1Job.JobType.MODULE2_PROCESS,
             status=Module1Job.Status.PENDING,
             work_dir="module1_jobs/u3",
@@ -143,6 +162,7 @@ class Module2ApiTests(TestCase):
     def test_ulr_endpoint_returns_rows_after_allocate_success(self):
         job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.SUCCESS,
             work_dir="module1_jobs/m2",
@@ -181,6 +201,7 @@ class Module2ApiTests(TestCase):
     def test_ulr_endpoint_rejects_non_success_allocate(self):
         job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.RUNNING,
             work_dir="module1_jobs/m2-running",
@@ -192,6 +213,7 @@ class Module2ApiTests(TestCase):
     def test_detail_and_download_are_owner_scoped(self):
         job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_PROCESS,
             status=Module1Job.Status.SUCCESS,
             work_dir="module1_jobs/m2-detail",
@@ -209,6 +231,7 @@ class Module2ApiTests(TestCase):
     def test_process_rejects_invalid_accounting_period(self, mocked_delay):
         allocate_job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.SUCCESS,
             work_dir="module1_jobs/m2-alloc-ok1",
@@ -241,6 +264,7 @@ class Module2ApiTests(TestCase):
     def test_process_rejects_malformed_selected_ulr(self, mocked_delay):
         allocate_job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.SUCCESS,
             work_dir="module1_jobs/m2-alloc-ok2",
@@ -273,6 +297,7 @@ class Module2ApiTests(TestCase):
     def test_process_rejects_allocate_job_not_success(self, mocked_delay):
         allocate_job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.RUNNING,
             work_dir="module1_jobs/m2-alloc-running",
@@ -300,10 +325,12 @@ class Module2ApiTests(TestCase):
     def test_process_endpoint_creates_job(self, mocked_delay):
         allocate_job = Module1Job.objects.create(
             user=self.user,
+            organization=self.org,
             job_type=Module1Job.JobType.MODULE2_ALLOCATE,
             status=Module1Job.Status.SUCCESS,
             work_dir="module1_jobs/m2-alloc",
             input_meta={},
+            output_artifacts=["Combined_Summary.xlsx"],
         )
         allocate_job.output_zip.save(
             f"{allocate_job.id}.zip",
