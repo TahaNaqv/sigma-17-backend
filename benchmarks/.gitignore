@@ -1,0 +1,6 @@
+# Benchmark inputs and frozen goldens contain real/representative data — keep
+# them out of version control. Only the runner code and this dir's README ship.
+fixtures/
+goldens/
+!README.md
+!.gitignore

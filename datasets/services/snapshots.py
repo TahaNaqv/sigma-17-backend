@@ -14,11 +14,6 @@ from ..models import ROW_MODEL_FOR_KIND, Dataset, DatasetSnapshot
 from ..serializers import ROW_SERIALIZER_FOR_KIND
 
 
-def _row_to_dict(row, serializer_cls) -> dict:
-    """Serialize a single row instance to a plain JSON-safe dict."""
-    return serializer_cls(row).data
-
-
 @transaction.atomic
 def create_snapshot(*, dataset: Dataset, consumer_job=None) -> DatasetSnapshot:
     """Materialize `dataset`'s current rows into a new DatasetSnapshot.
@@ -30,7 +25,11 @@ def create_snapshot(*, dataset: Dataset, consumer_job=None) -> DatasetSnapshot:
     model = ROW_MODEL_FOR_KIND[dataset.kind]
     serializer_cls = ROW_SERIALIZER_FOR_KIND[dataset.kind]
     rows_qs = model.objects.filter(dataset=dataset).order_by("row_index", "id")
-    payload = [_row_to_dict(r, serializer_cls) for r in rows_qs]
+    # Serialize the whole queryset in one pass. The row serializers are flat
+    # ModelSerializers (no per-row lookups / SerializerMethodFields), so this is
+    # identical output to per-row `.data` but avoids instantiating a serializer
+    # per row — materially faster on large datasets.
+    payload = list(serializer_cls(rows_qs, many=True).data)
 
     snap = DatasetSnapshot.objects.create(
         dataset=dataset,

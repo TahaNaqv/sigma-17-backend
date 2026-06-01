@@ -16,6 +16,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 
+from core.excel import READ_ENGINE
+from core.profiling import stage_timer
+
 
 def select_experience_period(start_period_str, end_period_str):
     start_period = pd.to_datetime(start_period_str, format='%d-%m-%Y')
@@ -41,14 +44,14 @@ def import_data(folder_path, amount_column_name, is_os=False):
         if is_os:
             needed_columns = ['AMOUNTOUTSTANDING','ISSUEDATE','LOSSDATE','As at','RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE']
             try:
-                existing_columns = pd.read_excel(file, nrows=0, engine='openpyxl').columns
+                existing_columns = pd.read_excel(file, nrows=0, engine=READ_ENGINE).columns
             except Exception as e:
                 print(f"Failed to read file {file}: {str(e)}")
                 continue
             read_columns = [col for col in needed_columns if col in existing_columns]
             
             try:
-                df = pd.read_excel(file, usecols=read_columns, parse_dates=['ISSUEDATE','LOSSDATE','As at'], engine='openpyxl')
+                df = pd.read_excel(file, usecols=read_columns, parse_dates=['ISSUEDATE','LOSSDATE','As at'], engine=READ_ENGINE)
             except Exception as e:
                 print(f"Failed to read data from file {file}: {str(e)}")
                 continue
@@ -61,14 +64,14 @@ def import_data(folder_path, amount_column_name, is_os=False):
         else:
             needed_columns = ['AMOUNTPAID','AMOUNTRECOVERED','ISSUEDATE','LOSSDATE','PAYMENTDATE','RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE']
             try:
-                existing_columns = pd.read_excel(file, nrows=0, engine='openpyxl').columns
+                existing_columns = pd.read_excel(file, nrows=0, engine=READ_ENGINE).columns
             except Exception as e:
                 print(f"Failed to read file {file}: {str(e)}")
                 continue
             read_columns = [col for col in needed_columns if col in existing_columns]
 
             try:
-                df = pd.read_excel(file, usecols=read_columns, parse_dates=['ISSUEDATE', 'LOSSDATE', 'PAYMENTDATE'], engine='openpyxl')
+                df = pd.read_excel(file, usecols=read_columns, parse_dates=['ISSUEDATE', 'LOSSDATE', 'PAYMENTDATE'], engine=READ_ENGINE)
             except Exception as e:
                 print(f"Failed to read data from file {file}: {str(e)}")
                 continue
@@ -90,7 +93,7 @@ def preprocess_data(premium_data_folder):
         if file_name.endswith('.xlsx') and not file_name.startswith('~$'):  # Skip temporary files
             file_path = os.path.join(premium_data_folder, file_name)
             try:
-                df = pd.read_excel(file_path, engine='openpyxl')
+                df = pd.read_excel(file_path, engine=READ_ENGINE)
                 df['RiskStartDate'] = pd.to_datetime(df['RiskStartDate'], errors='coerce')
                 df['RiskEndDate'] = pd.to_datetime(df['RiskEndDate'], errors='coerce')
                 dfs.append(df)
@@ -199,15 +202,22 @@ def calculate_upr(df, bop, eop):
     return df
 
 def summarize_upr_by_reserving_class(df, bop=None, eop=None):
-    df['GWP'] = df.apply(lambda x: x['PREMIUMAMOUNT'] if x['RI_TREATY_TYPE'] == 'GROSS' else None, axis=1)
-    df['Gross UPR'] = df.apply(lambda x: x['UPR'] if x['RI_TREATY_TYPE'] == 'GROSS' else None, axis=1)
-    df['Commission Expense'] = df.apply(lambda x: x['COMMISSIONAMOUNT'] if x['RI_TREATY_TYPE'] == 'GROSS' else None, axis=1)
-    df['DAC'] = df.apply(lambda x: x['DAC'] if x['RI_TREATY_TYPE'] == 'GROSS' else None, axis=1)
+    # Vectorised replacement for per-row .apply (plan §1.4). `s.where(mask)` keeps
+    # the value where the treaty type matches and yields NaN otherwise — identical
+    # to the original `value if ... else None` once summed/round-tripped. The
+    # assignment ORDER is preserved: 'DAC' is masked first, and 'UCR' then reads
+    # the already-masked 'DAC', exactly as the original applies did.
+    gross_mask = df['RI_TREATY_TYPE'] == 'GROSS'
+    ri_mask = df['RI_TREATY_TYPE'] == 'RI'
+    df['GWP'] = df['PREMIUMAMOUNT'].where(gross_mask)
+    df['Gross UPR'] = df['UPR'].where(gross_mask)
+    df['Commission Expense'] = df['COMMISSIONAMOUNT'].where(gross_mask)
+    df['DAC'] = df['DAC'].where(gross_mask)
 
-    df['RI GWP'] = df.apply(lambda x: x['PREMIUMAMOUNT'] if x['RI_TREATY_TYPE'] == 'RI' else None, axis=1)
-    df['RI UPR'] = df.apply(lambda x: x['UPR'] if x['RI_TREATY_TYPE'] == 'RI' else None, axis=1)
-    df['RI Commission'] = df.apply(lambda x: x['COMMISSIONAMOUNT'] if x['RI_TREATY_TYPE'] == 'RI' else None, axis=1)
-    df['UCR'] = df.apply(lambda x: x['DAC'] if x['RI_TREATY_TYPE'] == 'RI' else None, axis=1)
+    df['RI GWP'] = df['PREMIUMAMOUNT'].where(ri_mask)
+    df['RI UPR'] = df['UPR'].where(ri_mask)
+    df['RI Commission'] = df['COMMISSIONAMOUNT'].where(ri_mask)
+    df['UCR'] = df['DAC'].where(ri_mask)
 
     # Apply date filter
     if bop and eop:
@@ -241,20 +251,28 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
     # Ensure the UPR for last_period_closing is calculated
     quarter_dates = get_quarter_end_dates(last_period_closing, eop)
     df = calculate_upr(df, last_period_closing, eop)
-    
+
+    # Vectorised loop bodies (plan §1.4): masks and the issue-date quarter string
+    # are constant across the loop, so hoist them out instead of recomputing per
+    # row via .apply. df was just reassigned by calculate_upr, so re-derive here.
+    gross_mask = df['RI_TREATY_TYPE'] == 'GROSS'
+    ri_mask = df['RI_TREATY_TYPE'] == 'RI'
+    issue_quarter = df['ISSUEDATE'].dt.to_period('Q').dt.strftime('%Y-Q%q')
+
     for date in all_dates:
         date_str = date.strftime('%Y-%m-%d')
         quarter_year_str = date.to_period('Q').strftime('%Y-Q%q')
-        
+
         # Ensure the UPR columns exist before proceeding
         upr_col = f'UPR_{date_str}'
         if upr_col not in df.columns:
             df[upr_col] = 0
-        
-        df[f'Gross_UPR_{date_str}'] = df.apply(lambda x: x[upr_col] if x['RI_TREATY_TYPE'] == 'GROSS' else None, axis=1)
-        df[f'RI_UPR_{date_str}'] = df.apply(lambda x: x[upr_col] if x['RI_TREATY_TYPE'] == 'RI' else None, axis=1)
-        df[f'GWP_{quarter_year_str}'] = df.apply(lambda x: x['PREMIUMAMOUNT'] if x['RI_TREATY_TYPE'] == 'GROSS' and x['ISSUEDATE'].to_period('Q').strftime('%Y-Q%q') == quarter_year_str else None, axis=1)
-        df[f'RI_GWP_{quarter_year_str}'] = df.apply(lambda x: x['PREMIUMAMOUNT'] if x['RI_TREATY_TYPE'] == 'RI' and x['ISSUEDATE'].to_period('Q').strftime('%Y-Q%q') == quarter_year_str else None, axis=1)
+
+        in_quarter = issue_quarter == quarter_year_str
+        df[f'Gross_UPR_{date_str}'] = df[upr_col].where(gross_mask)
+        df[f'RI_UPR_{date_str}'] = df[upr_col].where(ri_mask)
+        df[f'GWP_{quarter_year_str}'] = df['PREMIUMAMOUNT'].where(gross_mask & in_quarter)
+        df[f'RI_GWP_{quarter_year_str}'] = df['PREMIUMAMOUNT'].where(ri_mask & in_quarter)
 
         additional_summary = df.groupby(['RESERVINGCLASS', 'UWY']).agg({
             f'Gross_UPR_{date_str}': 'sum',
@@ -355,7 +373,7 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
         ]
         df[f'UPR_{date_str}'] = np.select(conditions, choices, default=0) * df['PREMIUMAMOUNT']
 
-        df[f'Gross_UPR_{date_str}'] = df.apply(lambda x: x[f'UPR_{date_str}'] if x['RI_TREATY_TYPE'] == 'GROSS' else None, axis=1)
+        df[f'Gross_UPR_{date_str}'] = df[f'UPR_{date_str}'].where(gross_mask)
 
         runoff_summary = df.groupby(['RESERVINGCLASS', 'UWY']).agg({
             f'Gross_UPR_{date_str}': 'sum'
@@ -518,29 +536,34 @@ def export_claims_os_summary_to_excel(summary_claims_os_df, file_path):
     summary_claims_os_df.to_excel(file_path, index=False, sheet_name='Claims OS Summary') 
     
 def calculate_incremental_triangle(df, start_period, end_period, is_os=False):
+    # NOTE: kept as the original row-by-row loop. A vectorised groupby version was
+    # attempted (plan §1.2) but changed the int/float dtype pattern of the triangle,
+    # which the downstream cumulative NaN-fill is sensitive to, so it was not
+    # bit-identical. Revisit only with an R1 tolerance sign-off. This is not a hot
+    # path on the reference data (reserve_loop is dominated by openpyxl writes).
     # Generate a list of quarterly periods from start_period to end_period
     accident_periods = pd.date_range(start_period, end_period, freq='QE').to_period('Q')
     max_development_period = len(accident_periods)
-    
+
     # Create a DataFrame with zeroes, indexed by the accident periods and columns for each development period
     triangle = pd.DataFrame(0, index=accident_periods.strftime('%Y-Q%q'), columns=range(max_development_period))
-    
+
     for index, row in df.iterrows():
         if is_os and pd.notna(row['As at']):
             accident_quarter = row['LOSSDATE'].to_period('Q')
             as_at_quarter = pd.to_datetime(row['As at']).to_period('Q')
             development_quarter = (as_at_quarter - accident_quarter).n
-            
+
             if accident_quarter in accident_periods and 0 <= development_quarter < max_development_period:
                 triangle.at[accident_quarter.strftime('%Y-Q%q'), development_quarter] += row['Amount']
         elif 'PAYMENTDATE' in df.columns and pd.notna(row['PAYMENTDATE']):
             accident_quarter = row['LOSSDATE'].to_period('Q')
             payment_quarter = row['PAYMENTDATE'].to_period('Q')
             development_quarter = (payment_quarter - accident_quarter).n
-            
+
             if accident_quarter in accident_periods and 0 <= development_quarter < max_development_period:
                 triangle.at[accident_quarter.strftime('%Y-Q%q'), development_quarter] += row['Amount']
-    
+
     # Reset the index to keep it clean for further operations
     triangle.reset_index(inplace=True)
     triangle.rename(columns={'index': 'Accident Period'}, inplace=True)
@@ -808,22 +831,28 @@ def run_generate_summary(
     bop = pd.to_datetime(bop_str, format="%d-%m-%Y")
     eop = pd.to_datetime(eop_str, format="%d-%m-%Y")
 
-    df = preprocess_data(premium_data_folder)
+    with stage_timer("m1.premium_load"):
+        df = preprocess_data(premium_data_folder)
     if df is None:
         raise ValueError("No valid data found in the premium data folder.")
 
-    summary_df = calculate_quarterly_premium(df, bop, eop)
-    df = calculate_upr(df, bop=bop, eop=eop)
-    upr_summary_df, additional_summaries, allocation_ep, upr_runoff = summarize_upr_by_reserving_class(
-        df, bop=bop, eop=eop
-    )
+    with stage_timer("m1.quarterly_premium"):
+        summary_df = calculate_quarterly_premium(df, bop, eop)
+    with stage_timer("m1.calculate_upr"):
+        df = calculate_upr(df, bop=bop, eop=eop)
+    with stage_timer("m1.summarize_upr_by_reserving_class"):
+        upr_summary_df, additional_summaries, allocation_ep, upr_runoff = summarize_upr_by_reserving_class(
+            df, bop=bop, eop=eop
+        )
 
-    paid_data = import_data(claims_paid_folder, "AMOUNTPAID", is_os=False)
+    with stage_timer("m1.claims_load_paid"):
+        paid_data = import_data(claims_paid_folder, "AMOUNTPAID", is_os=False)
     if paid_data is None or "PAYMENTDATE" not in paid_data.columns:
         raise ValueError("No valid 'PAYMENTDATE' found in the data.")
     claims_paid_summary_df = calculate_claims_paid_summary(paid_data, bop, eop)
 
-    os_data = import_data(claims_os_folder, "AMOUNTOUTSTANDING", is_os=True)
+    with stage_timer("m1.claims_load_os"):
+        os_data = import_data(claims_os_folder, "AMOUNTOUTSTANDING", is_os=True)
     if os_data is None or "As at" not in os_data.columns:
         raise ValueError("No valid 'As at' found in the data.")
     claims_os_summary_df, lic_os_summary = calculate_claims_os_summary(os_data, eop)
@@ -963,6 +992,8 @@ def run_generate_summary(
     # Reserve Summary logic
     ibnr_summaries = []
 
+    _reserve_t = stage_timer("m1.reserve_loop")
+    _reserve_t.__enter__()
     for reserving_class in df['RESERVINGCLASS'].unique():
         for head_of_damage in combined_data['HEADOFDAMAGE'].unique():
             for ri_type in ['GROSS', 'RI']:
@@ -1173,3 +1204,4 @@ def run_generate_summary(
                 #reserve_summary = generate_reserve_summary(reserving_class_data, reserving_class, head_of_damage, ri_type, output_file_path, ibnr_summaries, output_dir)
                 #if reserve_summary is not None:
                 #    ibnr_summaries.append(reserve_summary)
+    _reserve_t.__exit__(None, None, None)

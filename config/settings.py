@@ -92,6 +92,14 @@ DATABASES = {
     )
 }
 
+# Reuse Postgres connections instead of opening a fresh one per request/task.
+# Celery tasks are short-lived per job but run many DB statements; CONN_MAX_AGE=0
+# (the Django default) forced a new TCP+auth handshake every time. Health checks
+# guard against handing out a connection the server already dropped.
+# Behind PgBouncer set DB_CONN_MAX_AGE=0 and let the pooler manage lifetimes.
+DATABASES['default']['CONN_MAX_AGE'] = env.int('DB_CONN_MAX_AGE', default=600)
+DATABASES['default']['CONN_HEALTH_CHECKS'] = env.bool('DB_CONN_HEALTH_CHECKS', default=True)
+
 # DATABASES = {
 #     'default': {
 #         'ENGINE': 'django.db.backends.postgresql',
@@ -158,6 +166,37 @@ CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 60  # 1 hour hard limit
 CELERY_TASK_SOFT_TIME_LIMIT = 55 * 60
+
+# --- Worker behaviour tuning (see docs/PERFORMANCE_OPTIMIZATION_PLAN.md §3.2) ---
+# prefetch=1: heavy actuarial jobs are long and uneven; the default prefetch of
+# 4 lets one worker hoard several big jobs while others idle. One-at-a-time gives
+# fair distribution and predictable queue lag.
+CELERY_WORKER_PREFETCH_MULTIPLIER = env.int('CELERY_WORKER_PREFETCH_MULTIPLIER', default=1)
+# acks_late: a job is re-queued if the worker is killed mid-run (OOM, deploy)
+# rather than silently lost. Engine tasks are effectively idempotent — they fully
+# rebuild their output dir each run — so redelivery is safe.
+CELERY_TASK_ACKS_LATE = env.bool('CELERY_TASK_ACKS_LATE', default=True)
+CELERY_TASK_REJECT_ON_WORKER_LOST = env.bool('CELERY_TASK_REJECT_ON_WORKER_LOST', default=True)
+# Recycle workers periodically so pandas/openpyxl heap fragmentation can't grow
+# unbounded across many large jobs.
+CELERY_WORKER_MAX_TASKS_PER_CHILD = env.int('CELERY_WORKER_MAX_TASKS_PER_CHILD', default=50)
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = env.int('CELERY_WORKER_MAX_MEMORY_PER_CHILD', default=0) or None
+CELERY_TASK_DEFAULT_QUEUE = 'default'
+# Route the long compute jobs to a dedicated 'compute' queue so a burst of big
+# jobs can't starve light/quick work (status side-effects, retention sweeps).
+# Run a worker per queue, e.g.:
+#   celery -A config worker -Q compute -c 4 -n compute@%h
+#   celery -A config worker -Q default,retention -c 2 -n default@%h
+CELERY_TASK_ROUTES = {
+    'processing.tasks.run_module1_summary_task': {'queue': 'compute'},
+    'processing.tasks.run_module1_policy_upr_task': {'queue': 'compute'},
+    'processing.tasks.run_module1_update_reserve_task': {'queue': 'compute'},
+    'processing.tasks.run_module1_uw_parameters_task': {'queue': 'compute'},
+    'processing.tasks.run_module2_allocate_task': {'queue': 'compute'},
+    'processing.tasks.run_module2_process_task': {'queue': 'compute'},
+    'processing.tasks.purge_expired_outputs_task': {'queue': 'retention'},
+    'processing.tasks.cascade_purge_task': {'queue': 'retention'},
+}
 
 # Module 1 job uploads (count / size guardrails)
 MODULE1_MAX_UPLOAD_FILES = env.int('MODULE1_MAX_UPLOAD_FILES', default=50)

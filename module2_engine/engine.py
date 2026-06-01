@@ -8,6 +8,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.excel import READ_ENGINE, WRITE_ENGINE
+from core.profiling import stage_timer
+
 
 def _read_required_sheet(path_or_bytes: str | bytes | io.BytesIO, sheet_name: str, **kwargs) -> pd.DataFrame:
     try:
@@ -25,14 +28,18 @@ def _require_columns(df: pd.DataFrame, sheet_name: str, required: list[str]) -> 
 
 
 def _read_excel_any(path_or_bytes: str | bytes | io.BytesIO, sheet_name: str, **kwargs) -> pd.DataFrame:
+    # An already-opened ExcelFile lets callers parse the workbook once and read
+    # many sheets from it, instead of re-parsing the whole file per sheet.
+    if isinstance(path_or_bytes, pd.ExcelFile):
+        return pd.read_excel(path_or_bytes, sheet_name=sheet_name, **kwargs)
     if isinstance(path_or_bytes, bytes):
-        return pd.read_excel(io.BytesIO(path_or_bytes), sheet_name=sheet_name, engine="openpyxl", **kwargs)
+        return pd.read_excel(io.BytesIO(path_or_bytes), sheet_name=sheet_name, engine=READ_ENGINE, **kwargs)
     if hasattr(path_or_bytes, "read"):
         raw = path_or_bytes.read()
         if hasattr(path_or_bytes, "seek"):
             path_or_bytes.seek(0)
-        return pd.read_excel(io.BytesIO(raw), sheet_name=sheet_name, engine="openpyxl", **kwargs)
-    return pd.read_excel(path_or_bytes, sheet_name=sheet_name, engine="openpyxl", **kwargs)
+        return pd.read_excel(io.BytesIO(raw), sheet_name=sheet_name, engine=READ_ENGINE, **kwargs)
+    return pd.read_excel(path_or_bytes, sheet_name=sheet_name, engine=READ_ENGINE, **kwargs)
 
 
 def calculate_sequence(merged_df: pd.DataFrame) -> pd.Series:
@@ -47,25 +54,36 @@ def calculate_sequence(merged_df: pd.DataFrame) -> pd.Series:
 
 
 def calculate_additional_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    # Vectorised equivalent of the original per-cell loop (see plan §A1). For each
+    # row r=(RESERVINGCLASS, GROSS/RI, Age=a, Expected Unpaid %=e) and column c,
+    # the cell is Incremental[a+c+1] / e where a row with that future Age exists in
+    # the same (RESERVINGCLASS, GROSS/RI) group, else 0. Rows with e == 0 become
+    # [1, 0, 0, ...]. We replace the O(N²·age) nested filter with a single keyed
+    # lookup per column. Numerics are identical: the same scalar float64 division
+    # incr / e, and the same first-match-wins on duplicate keys (drop_duplicates
+    # keep="first" mirrors the original `future_row[...].values[0]`).
     max_age = int(df["Age"].max())
-    additional_matrix = pd.DataFrame(index=df.index)
-    for col in range(max_age + 1):
-        additional_matrix[col] = 0.0
-    for index, row in df.iterrows():
-        expected_unpaid_at_age = row["Expected Unpaid %"]
-        if expected_unpaid_at_age == 0:
-            additional_matrix.at[index, 0] = 1
-            continue
-        for col in range(max_age + 1):
-            future_age = row["Age"] + col + 1
-            future_row = df[
-                (df["RESERVINGCLASS"] == row["RESERVINGCLASS"])
-                & (df["GROSS/RI"] == row["GROSS/RI"])
-                & (df["Age"] == future_age)
-            ]
-            if not future_row.empty:
-                incremental_at_future_age = future_row["Incremental"].values[0]
-                additional_matrix.at[index, col] = incremental_at_future_age / expected_unpaid_at_age
+    cols = list(range(max_age + 1))
+    additional_matrix = pd.DataFrame(0.0, index=df.index, columns=cols)
+
+    keyed = df.drop_duplicates(subset=["RESERVINGCLASS", "GROSS/RI", "Age"], keep="first")
+    incr_by_key = keyed.set_index(["RESERVINGCLASS", "GROSS/RI", "Age"])["Incremental"]
+
+    rc = df["RESERVINGCLASS"].to_numpy()
+    gr = df["GROSS/RI"].to_numpy()
+    age = df["Age"].to_numpy()
+    expected = df["Expected Unpaid %"].to_numpy()
+
+    for c in cols:
+        lookup = pd.MultiIndex.from_arrays([rc, gr, age + c + 1])
+        incr = incr_by_key.reindex(lookup).to_numpy()  # NaN where no future row
+        with np.errstate(divide="ignore", invalid="ignore"):
+            additional_matrix[c] = np.where(np.isnan(incr), 0.0, incr / expected)
+
+    zero_mask = expected == 0
+    if zero_mask.any():
+        additional_matrix.loc[zero_mask, :] = 0.0
+        additional_matrix.loc[zero_mask, 0] = 1.0
     return additional_matrix
 
 
@@ -122,15 +140,18 @@ def _apply_selected_ulr(uw_summary: pd.DataFrame, selected_ulr_rows: list[dict[s
 
 
 def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: list[dict[str, Any]] | None = None) -> tuple[bytes, list[dict[str, Any]]]:
-    file_path = io.BytesIO(combined_summary_bytes)
-    ibnr_summary = _read_required_sheet(file_path, "IBNR Summary")
-    allocation_ep = _read_required_sheet(file_path, "Allocation EP")
-    lic_os_summary = _read_required_sheet(file_path, "LIC (OS) Summary")
-    ulae_ra_percentages = _read_required_sheet(file_path, "ULAE-RA")
-    discount_rate = _read_required_sheet(file_path, "Discount Rate")
-    upr_runoff = _read_required_sheet(file_path, "UPR Run-Off")
-    uw_summary = _read_required_sheet(file_path, "UW Summary")
-    combined_summary_sheet = _read_required_sheet(file_path, "Combined Summary")
+    # Parse the workbook once; each sheet read below reuses it (was 8 full
+    # openpyxl re-parses of the same file — plan §B).
+    with stage_timer("m2.allocate.read_workbook"):
+        file_path = pd.ExcelFile(io.BytesIO(combined_summary_bytes), engine=READ_ENGINE)
+        ibnr_summary = _read_required_sheet(file_path, "IBNR Summary")
+        allocation_ep = _read_required_sheet(file_path, "Allocation EP")
+        lic_os_summary = _read_required_sheet(file_path, "LIC (OS) Summary")
+        ulae_ra_percentages = _read_required_sheet(file_path, "ULAE-RA")
+        discount_rate = _read_required_sheet(file_path, "Discount Rate")
+        upr_runoff = _read_required_sheet(file_path, "UPR Run-Off")
+        uw_summary = _read_required_sheet(file_path, "UW Summary")
+        combined_summary_sheet = _read_required_sheet(file_path, "Combined Summary")
     _require_columns(
         combined_summary_sheet,
         "Combined Summary",
@@ -275,12 +296,14 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
     merged_df["Cumulative %"] = merged_df["Cumulative %"].fillna(0)
     merged_df["Age"] = calculate_sequence(merged_df)
     merged_df["Expected Unpaid %"] = 1 - merged_df["Cumulative %"]
-    merged_df["Incremental"] = (
-        merged_df.groupby(["RESERVINGCLASS", "UWY", "GROSS/RI"])
-        .apply(lambda x: x.sort_values(by="Age")["Cumulative %"].diff().fillna(x["Cumulative %"]))
-        .reset_index(level=[0, 1, 2], drop=True)
-    )
-    additional_matrix = calculate_additional_matrix(merged_df)
+    with stage_timer("m2.allocate.incremental"):
+        merged_df["Incremental"] = (
+            merged_df.groupby(["RESERVINGCLASS", "UWY", "GROSS/RI"])
+            .apply(lambda x: x.sort_values(by="Age")["Cumulative %"].diff().fillna(x["Cumulative %"]))
+            .reset_index(level=[0, 1, 2], drop=True)
+        )
+    with stage_timer("m2.allocate.additional_matrix"):
+        additional_matrix = calculate_additional_matrix(merged_df)
     additional_matrix.columns = [int(col) for col in additional_matrix.columns]
     merged_df = pd.concat([merged_df, additional_matrix], axis=1)
 
@@ -362,7 +385,6 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
     ].copy()
 
     # Run-off and LC are same desktop formulas
-    upr_runoff_processed = pd.DataFrame()
     upr_runoff_columns = upr_runoff.columns[2:]
     avg_df.iloc[:, 1:] = avg_df.iloc[:, 1:].apply(lambda x: x / 1)
     summary_data = {
@@ -373,62 +395,74 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
         "GMM LRC_Discounted_CY": [],
         "GMM LRC_Discounted_PY": [],
     }
-    for _, row in upr_runoff.iterrows():
-        reserving_class = row["RESERVINGCLASS"]
-        uwy = row["UWY"]
-        if reserving_class in avg_df["RESERVINGCLASS"].values:
-            combined_lr = uw_summary.loc[
-                (uw_summary["RESERVINGCLASS"] == reserving_class)
-                & (uw_summary["UWY"] == uwy),
-                "Combined Ratio",
-            ].values[0]
-            for period in additional_matrix.columns:
-                period_int = int(period)
-                multiplier = avg_df.loc[
-                    avg_df["RESERVINGCLASS"] == reserving_class, period_int
+    # Pre-index discount factors by quarterly period for O(1) lookup instead of a
+    # boolean-filter scan per (period, column). 'Quarterly' is a unique 0..N range
+    # (calculate_discount_rates), so these dicts exactly reproduce the original
+    # `.loc[... == discount_index].values[0]`.
+    cy_disc = dict(zip(cy_result_df["Quarterly"], cy_result_df["Cumulative Discount Rate"]))
+    py_disc = dict(zip(py_result_df["Quarterly"], py_result_df["Cumulative Discount Rate"]))
+    # Accumulate rows then build the frame once; concatenating inside the loop was
+    # O(n²) (plan §1.3).
+    runoff_rows: list[dict[str, Any]] = []
+    # Pre-index the payment-pattern multipliers by reserving class (was a boolean
+    # scan of avg_df per (row, period)). Unique RESERVINGCLASS after the upstream
+    # groupby, so .loc returns the same scalar as the original `.values[0]`.
+    avg_by_rc = avg_df.set_index("RESERVINGCLASS")
+    upr_col_list = list(upr_runoff_columns)
+    with stage_timer("m2.allocate.runoff_loop"):
+        for _, row in upr_runoff.iterrows():
+            reserving_class = row["RESERVINGCLASS"]
+            uwy = row["UWY"]
+            if reserving_class in avg_df["RESERVINGCLASS"].values:
+                combined_lr = uw_summary.loc[
+                    (uw_summary["RESERVINGCLASS"] == reserving_class)
+                    & (uw_summary["UWY"] == uwy),
+                    "Combined Ratio",
                 ].values[0]
-                new_row = row.copy()
-                new_row["Time Period"] = period_int
-                upr_multiplier_sum = 0
-                upr_combined_lr_multiplier_sum = 0
-                upr_combined_lr_multiplier_disc_sum_cy = 0
-                upr_combined_lr_multiplier_disc_sum_py = 0
-                for col in upr_runoff_columns:
-                    val = row[col]
-                    upr_combined_lr_mult = val * combined_lr * multiplier
-                    new_row[f"{col}_CombinedLR_Multiplier"] = upr_combined_lr_mult
-                    upr_multiplier_sum += val * multiplier
-                    upr_combined_lr_multiplier_sum += upr_combined_lr_mult
-                for col in upr_runoff_columns:
-                    upr_combined_lr_mult = new_row[f"{col}_CombinedLR_Multiplier"]
-                    quarter_offset = upr_runoff_columns.get_loc(col)
-                    discount_index = period_int + quarter_offset
-                    disc_cy = cy_result_df.loc[
-                        cy_result_df["Quarterly"] == discount_index,
-                        "Cumulative Discount Rate",
-                    ].values
-                    disc_py = py_result_df.loc[
-                        py_result_df["Quarterly"] == discount_index,
-                        "Cumulative Discount Rate",
-                    ].values
-                    new_row[f"{col}_Disc_CY"] = upr_combined_lr_mult * disc_cy[0] if len(disc_cy) > 0 else 0
-                    new_row[f"{col}_Disc_PY"] = upr_combined_lr_mult * disc_py[0] if len(disc_py) > 0 else 0
-                    upr_combined_lr_multiplier_disc_sum_cy += new_row[f"{col}_Disc_CY"]
-                    upr_combined_lr_multiplier_disc_sum_py += new_row[f"{col}_Disc_PY"]
-                summary_data["Reserving class"].append(reserving_class)
-                summary_data["UWY"].append(uwy)
-                summary_data["PAA_LRC"].append(upr_multiplier_sum)
-                summary_data["GMM LRC_Undiscounted"].append(upr_combined_lr_multiplier_sum)
-                summary_data["GMM LRC_Discounted_CY"].append(
-                    upr_combined_lr_multiplier_disc_sum_cy
-                )
-                summary_data["GMM LRC_Discounted_PY"].append(
-                    upr_combined_lr_multiplier_disc_sum_py
-                )
-                upr_runoff_processed = pd.concat(
-                    [upr_runoff_processed, pd.DataFrame([new_row])], ignore_index=True
-                )
-    upr_runoff_processed.fillna(0, inplace=True)
+                # Build rows as plain dicts (Series __setitem__/.copy() per cell was
+                # the bottleneck); values are identical and so is column order.
+                base = row.to_dict()
+                for period in additional_matrix.columns:
+                    period_int = int(period)
+                    multiplier = avg_by_rc.loc[reserving_class, period_int]
+                    new_row = dict(base)
+                    new_row["Time Period"] = period_int
+                    upr_multiplier_sum = 0
+                    upr_combined_lr_multiplier_sum = 0
+                    upr_combined_lr_multiplier_disc_sum_cy = 0
+                    upr_combined_lr_multiplier_disc_sum_py = 0
+                    for col in upr_col_list:
+                        val = base[col]
+                        upr_combined_lr_mult = val * combined_lr * multiplier
+                        new_row[f"{col}_CombinedLR_Multiplier"] = upr_combined_lr_mult
+                        upr_multiplier_sum += val * multiplier
+                        upr_combined_lr_multiplier_sum += upr_combined_lr_mult
+                    for col in upr_col_list:
+                        upr_combined_lr_mult = new_row[f"{col}_CombinedLR_Multiplier"]
+                        quarter_offset = upr_runoff_columns.get_loc(col)
+                        discount_index = period_int + quarter_offset
+                        disc_cy = cy_disc.get(discount_index)
+                        disc_py = py_disc.get(discount_index)
+                        new_row[f"{col}_Disc_CY"] = upr_combined_lr_mult * disc_cy if disc_cy is not None else 0
+                        new_row[f"{col}_Disc_PY"] = upr_combined_lr_mult * disc_py if disc_py is not None else 0
+                        upr_combined_lr_multiplier_disc_sum_cy += new_row[f"{col}_Disc_CY"]
+                        upr_combined_lr_multiplier_disc_sum_py += new_row[f"{col}_Disc_PY"]
+                    summary_data["Reserving class"].append(reserving_class)
+                    summary_data["UWY"].append(uwy)
+                    summary_data["PAA_LRC"].append(upr_multiplier_sum)
+                    summary_data["GMM LRC_Undiscounted"].append(upr_combined_lr_multiplier_sum)
+                    summary_data["GMM LRC_Discounted_CY"].append(
+                        upr_combined_lr_multiplier_disc_sum_cy
+                    )
+                    summary_data["GMM LRC_Discounted_PY"].append(
+                        upr_combined_lr_multiplier_disc_sum_py
+                    )
+                    runoff_rows.append(new_row)
+    with stage_timer("m2.allocate.runoff_build"):
+        upr_runoff_processed = (
+            pd.DataFrame(runoff_rows).reset_index(drop=True) if runoff_rows else pd.DataFrame()
+        )
+        upr_runoff_processed.fillna(0, inplace=True)
     summary_df = pd.DataFrame(summary_data)
     pivot_summary_df = (
         summary_df.pivot_table(
@@ -486,18 +520,25 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
     )
 
     out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        combined_summary_sheet.to_excel(writer, index=False, sheet_name="Combined Summary")
-        merged_df.to_excel(writer, index=False, sheet_name="MainSheet")
-        future_cf_df.to_excel(writer, index=False, sheet_name="FutureCF")
-        discounted_cf_cy_df.to_excel(writer, index=False, sheet_name="Discounted CF CY")
-        discounted_cf_py_df.to_excel(writer, index=False, sheet_name="Discounted CF PY")
-        avg_df.to_excel(writer, index=False, sheet_name="Payment Pattern")
-        upr_runoff_processed.to_excel(writer, index=False, sheet_name="Run-off")
-        loss_ratio_sheet.to_excel(writer, index=False, sheet_name="Loss Ratio")
-        pivot_summary_df.to_excel(writer, index=False, sheet_name="LC")
-        combined_discount_df.to_excel(writer, index=False, sheet_name="CY-PY Discount")
-        upr_dac_eop_df.to_excel(writer, index=False, sheet_name="UPR-DAC_eop")
+    # Single source of truth for the allocate sheets (insertion order == written
+    # order). Returned so run_module2_process can reuse these frames instead of
+    # re-reading the workbook it just wrote (plan §2.2).
+    allocate_sheets: dict[str, pd.DataFrame] = {
+        "Combined Summary": combined_summary_sheet,
+        "MainSheet": merged_df,
+        "FutureCF": future_cf_df,
+        "Discounted CF CY": discounted_cf_cy_df,
+        "Discounted CF PY": discounted_cf_py_df,
+        "Payment Pattern": avg_df,
+        "Run-off": upr_runoff_processed,
+        "Loss Ratio": loss_ratio_sheet,
+        "LC": pivot_summary_df,
+        "CY-PY Discount": combined_discount_df,
+        "UPR-DAC_eop": upr_dac_eop_df,
+    }
+    with stage_timer("m2.allocate.write_workbook"), pd.ExcelWriter(out, engine=WRITE_ENGINE) as writer:
+        for sheet_name, frame in allocate_sheets.items():
+            frame.to_excel(writer, index=False, sheet_name=sheet_name)
 
     ulr_rows: list[dict[str, Any]] = []
     for idx, row in loss_ratio_sheet.iterrows():
@@ -526,7 +567,7 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
                 "combined_ratio": float(row["Combined Ratio"]),
             }
         )
-    return out.getvalue(), ulr_rows
+    return out.getvalue(), ulr_rows, allocate_sheets
 
 
 def convert_accident_period_to_year(df: pd.DataFrame) -> pd.DataFrame:
@@ -674,7 +715,7 @@ def create_ifrs_summary(diff_df: pd.DataFrame, combined_summary: pd.DataFrame) -
 
 
 def run_module2_allocate(combined_summary_bytes: bytes) -> dict[str, Any]:
-    out_bytes, ulr_rows = _build_allocate_outputs(combined_summary_bytes, None)
+    out_bytes, ulr_rows, _ = _build_allocate_outputs(combined_summary_bytes, None)
     return {"workbook_bytes": out_bytes, "ulr_rows": ulr_rows}
 
 
@@ -685,8 +726,14 @@ def run_module2_process(
     accounting_period: int,
     selected_ulr_rows: list[dict[str, Any]],
 ) -> bytes:
-    # Rebuild allocate outputs with selected ULR
-    out_bytes, _ = _build_allocate_outputs(combined_summary_bytes, selected_ulr_rows)
+    # Rebuild allocate outputs with selected ULR; reuse the in-memory frames
+    # instead of re-reading the workbook we just produced (plan §2.2).
+    out_bytes, _, allocate_sheets = _build_allocate_outputs(combined_summary_bytes, selected_ulr_rows)
+    # NB: read these two back from the serialized workbook rather than reusing the
+    # in-memory frames. The xlsx round-trip normalises dtypes, and the downstream
+    # movement/IFRS math is sensitive to that — reusing in-memory frames here
+    # changed several computed cells (caught by the golden net). The final-workbook
+    # *write* below still reuses allocate_sheets directly, which is bit-identical.
     current_main = _read_excel_any(out_bytes, "MainSheet")
     combined_summary = _read_excel_any(out_bytes, "Combined Summary")
     previous_df = _read_required_sheet(previous_period_bytes, "LIC_BOP")
@@ -775,10 +822,12 @@ def run_module2_process(
     startrow_lic_curr = len(lic_prev_with_header) + 2
 
     final = io.BytesIO()
-    with pd.ExcelWriter(final, engine="openpyxl") as writer:
-        # include allocate workbook sheets first
-        for sheet in pd.ExcelFile(io.BytesIO(out_bytes), engine="openpyxl").sheet_names:
-            _read_excel_any(out_bytes, sheet).to_excel(writer, index=False, sheet_name=sheet)
+    # xlsxwriter handles the two-tables-per-sheet (startrow) reconciliation layout.
+    with pd.ExcelWriter(final, engine=WRITE_ENGINE) as writer:
+        # include allocate workbook sheets first (reuse in-memory frames instead of
+        # re-parsing out_bytes once per sheet — plan §2.2)
+        for sheet_name, frame in allocate_sheets.items():
+            frame.to_excel(writer, index=False, sheet_name=sheet_name)
         result_df.to_excel(writer, index=False, sheet_name="Movement Analysis")
         ifrs_summary_df.to_excel(writer, index=False, sheet_name="IFRS Summary")
         lrc_prev_with_header.to_excel(writer, index=False, sheet_name="LRC BOP-EOP Reconciliation", startrow=0)

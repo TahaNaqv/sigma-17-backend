@@ -15,7 +15,7 @@ purge does delete rows because it is an explicit admin action.
 from __future__ import annotations
 
 import logging
-from collections import deque
+from collections import defaultdict, deque
 
 from django.db import transaction
 from django.db.models import QuerySet
@@ -90,21 +90,40 @@ def purge_expired_outputs(*, batch_size: int = 500, now=None) -> dict:
 
 
 def _walk_descendants(root: Module1Job) -> list[Module1Job]:
-    """Return all descendants of `root` in BFS order. The root is NOT included."""
-    out: list[Module1Job] = []
-    queue: deque[Module1Job] = deque([root])
-    seen: set[str] = {str(root.id)}
+    """Return all descendants of `root` in BFS order. The root is NOT included.
+
+    Lineage never crosses organizations, so we fetch the whole org's
+    (id, source_job_id) edge list once and walk it in memory, then bulk-load
+    the descendant rows — two queries total instead of one per node (the old
+    `derived_jobs.all()`-per-node N+1, plan §3.6). Sibling order follows the
+    model's default ``-created_at`` ordering; deletion correctness only depends
+    on the parent-before-child BFS invariant, which is preserved.
+    """
+    edges = (
+        Module1Job.objects
+        .filter(organization_id=root.organization_id)
+        .order_by("-created_at")
+        .values_list("id", "source_job_id")
+    )
+    children_by_parent: dict = defaultdict(list)
+    for child_id, parent_id in edges:
+        if parent_id is not None:
+            children_by_parent[parent_id].append(child_id)
+
+    ordered_ids: list = []
+    queue: deque = deque([root.id])
+    seen: set = {root.id}
     while queue:
-        node = queue.popleft()
-        children = list(node.derived_jobs.all())
-        for child in children:
-            cid = str(child.id)
-            if cid in seen:
+        node_id = queue.popleft()
+        for child_id in children_by_parent.get(node_id, []):
+            if child_id in seen:
                 continue
-            seen.add(cid)
-            out.append(child)
-            queue.append(child)
-    return out
+            seen.add(child_id)
+            ordered_ids.append(child_id)
+            queue.append(child_id)
+
+    jobs_by_id = Module1Job.objects.in_bulk(ordered_ids)
+    return [jobs_by_id[i] for i in ordered_ids]
 
 
 def cascade_purge(root_job: Module1Job, *, actor=None, force: bool = False) -> dict:

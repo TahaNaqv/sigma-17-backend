@@ -75,10 +75,13 @@ services:
       dockerfile: Dockerfile
     container_name: sigma17-celery
     restart: always
+    # Consumes all three queues (compute/default/retention). For scale-out, add a
+    # second dedicated worker with -Q compute — see
+    # docs/PERFORMANCE_OPTIMIZATION_PLAN.md §3.2.
     command: >
       sh -c "
         python manage.py wait_for_db &&
-        celery -A config worker -l info
+        celery -A config worker -l info -Q compute,default,retention --concurrency=${CELERY_CONCURRENCY:-4}
       "
     volumes:
       - .:/app
