@@ -227,3 +227,112 @@ class Module1OutputPreviewApiTests(TestCase):
         )
         res = self.client.get(f"/api/module1/jobs/{job2.id}/output/files/")
         self.assertEqual(res.status_code, 404)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class Module2OutputPreviewApiTests(TestCase):
+    """Module 2 outputs are ZIP archives too, so the preview endpoints reuse the
+    same output_preview machinery — these mirror the Module 1 coverage."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="owner-org")
+        self.other_org = Organization.objects.create(name="other-org")
+        self.owner = User.objects.create_user(
+            username="m2owner",
+            email="m2owner@example.com",
+            password="testpass123",
+        )
+        _give_role_with_permissions(
+            self.owner, "M2 Owner Role", ["runhistory.view"], self.org
+        )
+        self.other = User.objects.create_user(
+            username="m2other",
+            email="m2other@example.com",
+            password="testpass123",
+        )
+        _give_role_with_permissions(
+            self.other, "M2 Other Role", ["runhistory.view"], self.other_org
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.owner)
+
+        self.job = Module1Job.objects.create(
+            user=self.owner,
+            organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_PROCESS,
+            status=Module1Job.Status.SUCCESS,
+            input_meta={},
+            work_dir="module1_jobs/test-m2-preview",
+        )
+        self.job.output_zip.save(
+            f"{self.job.id}.zip",
+            ContentFile(_zip_with_xlsx("Module2_Final_Output.xlsx")),
+            save=True,
+        )
+
+    def test_output_files_happy_path(self):
+        res = self.client.get(f"/api/module2/jobs/{self.job.id}/output/files/")
+        self.assertEqual(res.status_code, 200, res.content)
+        body = res.json()
+        self.assertEqual(str(self.job.id), body["job_id"])
+        self.assertEqual(1, len(body["files"]))
+        self.assertEqual("Module2_Final_Output.xlsx", body["files"][0]["path"])
+
+    def test_output_sheets_happy_path(self):
+        res = self.client.get(
+            f"/api/module2/jobs/{self.job.id}/output/sheets/?file=Module2_Final_Output.xlsx"
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        names = [s["name"] for s in res.json()["sheets"]]
+        self.assertIn("Combined Summary", names)
+        self.assertIn("UW Summary", names)
+
+    def test_output_rows_happy_path(self):
+        res = self.client.get(
+            f"/api/module2/jobs/{self.job.id}/output/rows/?file=Module2_Final_Output.xlsx&sheet=Combined Summary&page=1&page_size=1"
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        body = res.json()
+        self.assertEqual(2, body["total_rows"])
+        self.assertEqual(["RESERVINGCLASS", "UWY", "Amount"], body["columns"])
+        self.assertEqual(1, len(body["rows"]))
+
+    def test_output_rows_invalid_page_size(self):
+        res = self.client.get(
+            f"/api/module2/jobs/{self.job.id}/output/rows/?file=Module2_Final_Output.xlsx&sheet=Combined Summary&page=1&page_size=9999"
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_output_preview_forbidden_without_read_permission(self):
+        no_perm_user = User.objects.create_user(
+            username="m2noperm",
+            email="m2noperm@example.com",
+            password="testpass123",
+        )
+        client = APIClient()
+        client.force_authenticate(user=no_perm_user)
+        res = client.get(f"/api/module2/jobs/{self.job.id}/output/files/")
+        self.assertEqual(res.status_code, 403)
+
+    def test_output_preview_hidden_for_non_owner(self):
+        client = APIClient()
+        client.force_authenticate(user=self.other)
+        res = client.get(f"/api/module2/jobs/{self.job.id}/output/files/")
+        self.assertEqual(res.status_code, 404)
+
+    def test_output_preview_404_when_output_not_ready(self):
+        job2 = Module1Job.objects.create(
+            user=self.owner,
+            organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_ALLOCATE,
+            status=Module1Job.Status.RUNNING,
+            input_meta={},
+            work_dir="module1_jobs/test-m2-preview-2",
+        )
+        res = self.client.get(f"/api/module2/jobs/{job2.id}/output/files/")
+        self.assertEqual(res.status_code, 404)
