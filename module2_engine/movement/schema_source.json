@@ -1,0 +1,3073 @@
+{
+  "schema_version": "2026.06",
+  "source": "SAMA IFRS17 movement template.xlsx",
+  "instance_key": [
+    "reserving_class",
+    "uwy"
+  ],
+  "sheets": {
+    "Gross": {
+      "buckets": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment",
+        "Total"
+      ],
+      "value_buckets": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+      ],
+      "lines": [
+        {
+          "id": "insurance_contract_liabilities_assets_as_at_01_01",
+          "row": 6,
+          "label": "Insurance contract liabilities/ (assets) as at 01/01",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "LRC_excl_LC": {
+              "excel": "=SUM(C7:C25)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "LRC_excl_LC",
+                  "lines": [
+                    "upr",
+                    "premium_receivable",
+                    "dac",
+                    "commission_payable",
+                    "premiums_received_in_advance",
+                    "premium_deficiency_reserve",
+                    "o_s_claims",
+                    "ibnr",
+                    "ulae",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_payable_payments_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting_impact",
+                    "advance_payments_to_other_parties_hospitals_etc",
+                    "provision_for_doubtful_debt",
+                    "provision_for_profit_commission_payable_to_policyholders",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Component": {
+              "excel": "=SUM(E7:E25)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Component",
+                  "lines": [
+                    "upr",
+                    "premium_receivable",
+                    "dac",
+                    "commission_payable",
+                    "premiums_received_in_advance",
+                    "premium_deficiency_reserve",
+                    "o_s_claims",
+                    "ibnr",
+                    "ulae",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_payable_payments_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting_impact",
+                    "advance_payments_to_other_parties_hospitals_etc",
+                    "provision_for_doubtful_debt",
+                    "provision_for_profit_commission_payable_to_policyholders",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "LIC_excl_RA": {
+              "excel": "=SUM(G7:G25)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "LIC_excl_RA",
+                  "lines": [
+                    "upr",
+                    "premium_receivable",
+                    "dac",
+                    "commission_payable",
+                    "premiums_received_in_advance",
+                    "premium_deficiency_reserve",
+                    "o_s_claims",
+                    "ibnr",
+                    "ulae",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_payable_payments_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting_impact",
+                    "advance_payments_to_other_parties_hospitals_etc",
+                    "provision_for_doubtful_debt",
+                    "provision_for_profit_commission_payable_to_policyholders",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(I7:I25)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "upr",
+                    "premium_receivable",
+                    "dac",
+                    "commission_payable",
+                    "premiums_received_in_advance",
+                    "premium_deficiency_reserve",
+                    "o_s_claims",
+                    "ibnr",
+                    "ulae",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_payable_payments_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting_impact",
+                    "advance_payments_to_other_parties_hospitals_etc",
+                    "provision_for_doubtful_debt",
+                    "provision_for_profit_commission_payable_to_policyholders",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Total": {
+              "excel": "=SUM(J7:J25)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Total",
+                  "lines": [
+                    "upr",
+                    "premium_receivable",
+                    "dac",
+                    "commission_payable",
+                    "premiums_received_in_advance",
+                    "premium_deficiency_reserve",
+                    "o_s_claims",
+                    "ibnr",
+                    "ulae",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_payable_payments_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting_impact",
+                    "advance_payments_to_other_parties_hospitals_etc",
+                    "provision_for_doubtful_debt",
+                    "provision_for_profit_commission_payable_to_policyholders",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "opening"
+        },
+        {
+          "id": "upr",
+          "row": 7,
+          "label": "UPR",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "premium_receivable",
+          "row": 8,
+          "label": "Premium receivable",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "dac",
+          "row": 9,
+          "label": "DAC",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "commission_payable",
+          "row": 10,
+          "label": "Commission Payable",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "premiums_received_in_advance",
+          "row": 11,
+          "label": "Premiums received in Advance",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "premium_deficiency_reserve",
+          "row": 12,
+          "label": "Premium Deficiency Reserve",
+          "level": 0,
+          "signs": {
+            "Loss_Component": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "o_s_claims",
+          "row": 13,
+          "label": "O/S Claims",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "ibnr",
+          "row": 14,
+          "label": "IBNR",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "ulae",
+          "row": 15,
+          "label": "ULAE",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "s_s_o_s",
+          "row": 16,
+          "label": "S&S O/S",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "s_s_ibnr",
+          "row": 17,
+          "label": "S&S IBNR",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "claims_payable_payments_in_pipeline",
+          "row": 18,
+          "label": "Claims payable (payments in pipeline)",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "prudence_margin_in_actuarial_be",
+          "row": 19,
+          "label": "Prudence Margin in Actuarial BE",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "-",
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "mgmt_margin_over_actuarial_be",
+          "row": 20,
+          "label": "Mgmt Margin over Actuarial BE",
+          "level": 0,
+          "signs": {
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "discounting_impact",
+          "row": 21,
+          "label": "Discounting impact",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-",
+            "Loss_Component": "-",
+            "LIC_excl_RA": "-",
+            "Risk_Adjustment": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "advance_payments_to_other_parties_hospitals_etc",
+          "row": 22,
+          "label": "Advance payments to Other parties (hospitals, etc.)",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "provision_for_doubtful_debt",
+          "row": 23,
+          "label": "Provision for Doubtful Debt",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+",
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "provision_for_profit_commission_payable_to_policyholders",
+          "row": 24,
+          "label": "Provision for Profit Commission payable to policyholders",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_methodology_diff",
+          "row": 25,
+          "label": "Other methodology diff",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+/-",
+            "Loss_Component": "+/-",
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "insurance_revenue",
+          "row": 26,
+          "label": "Insurance revenue",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "LRC_excl_LC": {
+              "excel": "=SUM(C27:C30)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "LRC_excl_LC",
+                  "lines": [
+                    "written_premium",
+                    "change_in_unearned_premium_reserves",
+                    "change_in_premium_debtors_provision_net_of_write_offs",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Component": {
+              "excel": "=SUM(E27:E30)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Component",
+                  "lines": [
+                    "written_premium",
+                    "change_in_unearned_premium_reserves",
+                    "change_in_premium_debtors_provision_net_of_write_offs",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "LIC_excl_RA": {
+              "excel": "=SUM(G27:G30)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "LIC_excl_RA",
+                  "lines": [
+                    "written_premium",
+                    "change_in_unearned_premium_reserves",
+                    "change_in_premium_debtors_provision_net_of_write_offs",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(I27:I30)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "written_premium",
+                    "change_in_unearned_premium_reserves",
+                    "change_in_premium_debtors_provision_net_of_write_offs",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Total": {
+              "excel": "=SUM(J27:J30)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Total",
+                  "lines": [
+                    "written_premium",
+                    "change_in_unearned_premium_reserves",
+                    "change_in_premium_debtors_provision_net_of_write_offs",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "written_premium",
+          "row": 27,
+          "label": "Written premium",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_unearned_premium_reserves",
+          "row": 28,
+          "label": "Change in Unearned Premium Reserves",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-/+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_premium_debtors_provision_net_of_write_offs",
+          "row": 29,
+          "label": "Change in Premium Debtors' Provision (net of write-offs)",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-/+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_methodology_diff_2",
+          "row": 30,
+          "label": "Other methodology diff",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-/+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "insurance_service_expenses",
+          "row": 31,
+          "label": "Insurance service expenses",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "LRC_excl_LC": {
+              "excel": "=SUM(C32+C42+C47+C53+C54)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "future_service_losses_on_onerous_contracts_and_reversals_of_those_losses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Component": {
+              "excel": "=SUM(E32+E42+E47+E53+E54)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "future_service_losses_on_onerous_contracts_and_reversals_of_those_losses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            },
+            "LIC_excl_RA": {
+              "excel": "=SUM(G32+G42+G47+G53+G54)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "future_service_losses_on_onerous_contracts_and_reversals_of_those_losses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(I32+I42+I47+I53+I54)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "future_service_losses_on_onerous_contracts_and_reversals_of_those_losses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "incurred_claims_and_other_expenses",
+          "row": 32,
+          "label": "Incurred claims and other expenses",
+          "level": 0,
+          "signs": {},
+          "kind": "subtotal"
+        },
+        {
+          "id": "incurred_in_cy_paid_in_cy",
+          "row": 33,
+          "label": "Incurred in CY, Paid in CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "incurred_in_cy_os_at_end_cy",
+          "row": 34,
+          "label": "Incurred in CY, OS at end-CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+",
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "incurred_in_cy_ibnr_at_end_cy",
+          "row": 35,
+          "label": "Incurred in CY, IBNR at end-CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+",
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "ulae_for_os_ibnr_at_end_cy",
+          "row": 36,
+          "label": "ULAE for OS & IBNR at end-CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "directly_attributable_expenses_excluding_insurance_acquisition_cash_flows",
+          "row": 37,
+          "label": "Directly Attributable Expenses, excluding Insurance Acquisition cash flows",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "insurance_acquisition_cash_flows_on_new_contracts_amortization_of_insurance_acquisition_cash_flows",
+          "row": 38,
+          "label": "Insurance Acquisition cash flows on New Contracts & Amortization of insurance acquisition cash flows",
+          "level": 0,
+          "signs": {},
+          "kind": "section"
+        },
+        {
+          "id": "commission_on_written_premium",
+          "row": 39,
+          "label": "Commission on Written Premium",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_acquistion_cash_flows",
+          "row": 40,
+          "label": "Other Acquistion Cash Flows",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_dac",
+          "row": 41,
+          "label": "Change in DAC",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "future_service_losses_on_onerous_contracts_and_reversals_of_those_losses",
+          "row": 42,
+          "label": "Future Service: Losses on onerous contracts and reversals of those losses",
+          "level": 0,
+          "signs": {},
+          "kind": "section"
+        },
+        {
+          "id": "lossess_on_new_onerous_contracts",
+          "row": 43,
+          "label": "Lossess on new onerous contracts",
+          "level": 1,
+          "signs": {
+            "Loss_Component": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "reversal_of_losses_on_existing_onerous_contracts",
+          "row": 44,
+          "label": "Reversal of losses on existing onerous contracts",
+          "level": 1,
+          "signs": {},
+          "kind": "section"
+        },
+        {
+          "id": "reversal_amortization_of_losses_following_an_assumed_patttern",
+          "row": 45,
+          "label": "Reversal/amortization of losses following an assumed patttern",
+          "level": 3,
+          "signs": {
+            "Loss_Component": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_assumptions_affecting_onerosity",
+          "row": 46,
+          "label": "Change in assumptions affecting onerosity",
+          "level": 3,
+          "signs": {
+            "Loss_Component": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "past_service_changes_to_liabilities_for_incurred_claims",
+          "row": 47,
+          "label": "Past Service: Changes to liabilities for incurred claims",
+          "level": 0,
+          "signs": {},
+          "kind": "subtotal"
+        },
+        {
+          "id": "change_in_ultimate_for_past_service",
+          "row": 48,
+          "label": "Change in Ultimate for Past Service",
+          "level": 0,
+          "signs": {},
+          "kind": "subtotal"
+        },
+        {
+          "id": "paid_in_cy",
+          "row": 49,
+          "label": "Paid in CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_os_in_cy",
+          "row": 50,
+          "label": "Change in OS in CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_ibnr_in_cy",
+          "row": 51,
+          "label": "Change in IBNR in CY",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_ulae_for_o_s_ibnr_claims",
+          "row": 52,
+          "label": "Change in ULAE for O/S & IBNR claims",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_methodology_diff_3",
+          "row": 53,
+          "label": "Other methodology diff",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "investment_components",
+          "row": 54,
+          "label": "Investment components",
+          "level": 0,
+          "signs": {},
+          "kind": "subtotal"
+        },
+        {
+          "id": "change_in_profit_commission",
+          "row": 55,
+          "label": "Change in Profit Commission",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "insurance_service_result",
+          "row": 56,
+          "label": "Insurance service result",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "LRC_excl_LC": {
+              "excel": "=C26-C31",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "insurance_revenue"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "insurance_service_expenses"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Component": {
+              "excel": "=E26-E31",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "insurance_revenue"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "insurance_service_expenses"
+                }
+              ],
+              "internal": true
+            },
+            "LIC_excl_RA": {
+              "excel": "=G26-G31",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "insurance_revenue"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "insurance_service_expenses"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=I26-I31",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "insurance_revenue"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "insurance_service_expenses"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "insurance_finance_expenses_income",
+          "row": 57,
+          "label": "Insurance finance expenses/income",
+          "level": 0,
+          "signs": {},
+          "kind": "section"
+        },
+        {
+          "id": "insurance_finance_expenses_income_p_l",
+          "row": 58,
+          "label": "Insurance finance expenses/income - P&L",
+          "level": 1,
+          "signs": {
+            "LRC_excl_LC": "+/-",
+            "Loss_Component": "+/-",
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "insurance_finance_expenses_income_oci",
+          "row": 59,
+          "label": "Insurance finance expenses/income - OCI",
+          "level": 1,
+          "signs": {
+            "LRC_excl_LC": "+/-",
+            "Loss_Component": "+/-",
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "effect_of_movements_in_exchange_rates",
+          "row": 60,
+          "label": "Effect of movements in exchange rates",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+/-",
+            "Loss_Component": "+/-",
+            "LIC_excl_RA": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_movements",
+          "row": 61,
+          "label": "Other movements",
+          "level": 0,
+          "signs": {},
+          "kind": "subtotal"
+        },
+        {
+          "id": "item_1_specify",
+          "row": 62,
+          "label": "Item 1 (Specify)",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "item_2_specify",
+          "row": 63,
+          "label": "Item 2 (Specify)",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "total_changes_in_the_statement_of_profit_or_loss_and_oci",
+          "row": 64,
+          "label": "Total changes in the statement of profit or loss and OCI",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "LRC_excl_LC": {
+              "excel": "=C61+C60+C57+C56",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "insurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LRC_excl_LC",
+                  "line": "insurance_service_result"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Component": {
+              "excel": "=E61+E60+E57+E56",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "insurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Component",
+                  "line": "insurance_service_result"
+                }
+              ],
+              "internal": true
+            },
+            "LIC_excl_RA": {
+              "excel": "=G61+G60+G57+G56",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "insurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "LIC_excl_RA",
+                  "line": "insurance_service_result"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=I61+I60+I57+I56",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "insurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "insurance_service_result"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "cash_flows",
+          "row": 65,
+          "label": "Cash flows",
+          "level": 0,
+          "signs": {},
+          "kind": "section"
+        },
+        {
+          "id": "premium_received",
+          "row": 66,
+          "label": "Premium Received",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "claims_paid",
+          "row": 67,
+          "label": "Claims paid",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "directly_attributable_expenses_paid_excluding_insurance_acquisition_cash_flows",
+          "row": 68,
+          "label": "Directly Attributable Expenses paid (excluding insurance acquisition cash flows)",
+          "level": 0,
+          "signs": {
+            "LIC_excl_RA": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "insurance_acquisition_cash_flows",
+          "row": 69,
+          "label": "Insurance Acquisition Cash flows",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_cash_flows",
+          "row": 70,
+          "label": "Other Cash Flows",
+          "level": 0,
+          "signs": {
+            "LRC_excl_LC": "+/-",
+            "LIC_excl_RA": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "total_cash_flows",
+          "row": 71,
+          "label": "Total Cash Flows",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "LRC_excl_LC": {
+              "excel": "=SUM(C66:C70)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "LRC_excl_LC",
+                  "lines": [
+                    "premium_received",
+                    "claims_paid",
+                    "directly_attributable_expenses_paid_excluding_insurance_acquisition_cash_flows",
+                    "insurance_acquisition_cash_flows",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Component": {
+              "excel": "=SUM(E66:E70)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Component",
+                  "lines": [
+                    "premium_received",
+                    "claims_paid",
+                    "directly_attributable_expenses_paid_excluding_insurance_acquisition_cash_flows",
+                    "insurance_acquisition_cash_flows",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "LIC_excl_RA": {
+              "excel": "=SUM(G66:G70)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "LIC_excl_RA",
+                  "lines": [
+                    "premium_received",
+                    "claims_paid",
+                    "directly_attributable_expenses_paid_excluding_insurance_acquisition_cash_flows",
+                    "insurance_acquisition_cash_flows",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(I66:I70)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "premium_received",
+                    "claims_paid",
+                    "directly_attributable_expenses_paid_excluding_insurance_acquisition_cash_flows",
+                    "insurance_acquisition_cash_flows",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "insurance_contract_liabilities_assets_as_at_30_06",
+          "row": 72,
+          "label": "Insurance contract liabilities/(assets) as at 30/06",
+          "level": 0,
+          "signs": {},
+          "kind": "closing"
+        }
+      ]
+    },
+    "RI": {
+      "buckets": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment",
+        "Total"
+      ],
+      "value_buckets": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+      ],
+      "lines": [
+        {
+          "id": "reinsurance_contract_assets_liabilities_as_at_01_01",
+          "row": 4,
+          "label": "Reinsurance contract assets/(liabilities) as at 01/01",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D5:D20)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "upr",
+                    "premium_payable",
+                    "dac",
+                    "commission_receivable",
+                    "premiums_paid_in_advance",
+                    "o_s_claims",
+                    "ibnr",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_receivable_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting",
+                    "provision_for_non_performance_risk",
+                    "provision_for_profit_commission_sliding_scale_commission_from_reinsurers",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F5:F20)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "upr",
+                    "premium_payable",
+                    "dac",
+                    "commission_receivable",
+                    "premiums_paid_in_advance",
+                    "o_s_claims",
+                    "ibnr",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_receivable_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting",
+                    "provision_for_non_performance_risk",
+                    "provision_for_profit_commission_sliding_scale_commission_from_reinsurers",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H5:H20)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "upr",
+                    "premium_payable",
+                    "dac",
+                    "commission_receivable",
+                    "premiums_paid_in_advance",
+                    "o_s_claims",
+                    "ibnr",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_receivable_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting",
+                    "provision_for_non_performance_risk",
+                    "provision_for_profit_commission_sliding_scale_commission_from_reinsurers",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J5:J20)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "upr",
+                    "premium_payable",
+                    "dac",
+                    "commission_receivable",
+                    "premiums_paid_in_advance",
+                    "o_s_claims",
+                    "ibnr",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_receivable_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting",
+                    "provision_for_non_performance_risk",
+                    "provision_for_profit_commission_sliding_scale_commission_from_reinsurers",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Total": {
+              "excel": "=SUM(K5:K20)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Total",
+                  "lines": [
+                    "upr",
+                    "premium_payable",
+                    "dac",
+                    "commission_receivable",
+                    "premiums_paid_in_advance",
+                    "o_s_claims",
+                    "ibnr",
+                    "s_s_o_s",
+                    "s_s_ibnr",
+                    "claims_receivable_in_pipeline",
+                    "prudence_margin_in_actuarial_be",
+                    "mgmt_margin_over_actuarial_be",
+                    "discounting",
+                    "provision_for_non_performance_risk",
+                    "provision_for_profit_commission_sliding_scale_commission_from_reinsurers",
+                    "other_methodology_diff"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "opening"
+        },
+        {
+          "id": "upr",
+          "row": 5,
+          "label": "UPR",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "premium_payable",
+          "row": 6,
+          "label": "Premium payable",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "dac",
+          "row": 7,
+          "label": "DAC",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "commission_receivable",
+          "row": 8,
+          "label": "Commission receivable",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "premiums_paid_in_advance",
+          "row": 9,
+          "label": "Premiums Paid in Advance",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "o_s_claims",
+          "row": 10,
+          "label": "O/S Claims",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "ibnr",
+          "row": 11,
+          "label": "IBNR",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "s_s_o_s",
+          "row": 12,
+          "label": "S&S O/S",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "s_s_ibnr",
+          "row": 13,
+          "label": "S&S IBNR",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "claims_receivable_in_pipeline",
+          "row": 14,
+          "label": "Claims receivable (in pipeline)",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "prudence_margin_in_actuarial_be",
+          "row": 15,
+          "label": "Prudence Margin in Actuarial BE",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "-",
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "mgmt_margin_over_actuarial_be",
+          "row": 16,
+          "label": "Mgmt Margin over Actuarial BE",
+          "level": 0,
+          "signs": {
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "discounting",
+          "row": 17,
+          "label": "Discounting",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "-",
+            "Loss_Recovery_Component": "-",
+            "Amounts_Recoverable_IC": "-",
+            "Risk_Adjustment": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "provision_for_non_performance_risk",
+          "row": 18,
+          "label": "Provision for non-performance risk",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "-",
+            "Amounts_Recoverable_IC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "provision_for_profit_commission_sliding_scale_commission_from_reinsurers",
+          "row": 19,
+          "label": "Provision for Profit Commission /Sliding scale commission from Reinsurers",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_methodology_diff",
+          "row": 20,
+          "label": "Other methodology diff",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-",
+            "Loss_Recovery_Component": "+/-",
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "amounts_allocated_to_reinsurance",
+          "row": 21,
+          "label": "Amounts Allocated to Reinsurance",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D22:D26)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "ceded_premium",
+                    "change_in_ri_unearned_premium_reserves",
+                    "reinsurance_fixed_commission",
+                    "change_in_ri_unearned_fixed_commission",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F22:F26)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "ceded_premium",
+                    "change_in_ri_unearned_premium_reserves",
+                    "reinsurance_fixed_commission",
+                    "change_in_ri_unearned_fixed_commission",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H22:H26)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "ceded_premium",
+                    "change_in_ri_unearned_premium_reserves",
+                    "reinsurance_fixed_commission",
+                    "change_in_ri_unearned_fixed_commission",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J22:J26)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "ceded_premium",
+                    "change_in_ri_unearned_premium_reserves",
+                    "reinsurance_fixed_commission",
+                    "change_in_ri_unearned_fixed_commission",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Total": {
+              "excel": "=SUM(K22:K26)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Total",
+                  "lines": [
+                    "ceded_premium",
+                    "change_in_ri_unearned_premium_reserves",
+                    "reinsurance_fixed_commission",
+                    "change_in_ri_unearned_fixed_commission",
+                    "other_methodology_diff_2"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "ceded_premium",
+          "row": 22,
+          "label": "Ceded premium",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_ri_unearned_premium_reserves",
+          "row": 23,
+          "label": "Change in RI Unearned Premium Reserves",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "reinsurance_fixed_commission",
+          "row": 24,
+          "label": "Reinsurance (fixed) commission",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_ri_unearned_fixed_commission",
+          "row": 25,
+          "label": "Change in RI unearned (fixed) commission",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_methodology_diff_2",
+          "row": 26,
+          "label": "Other methodology diff",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "amounts_recoverable_from_reinsurance",
+          "row": 27,
+          "label": "Amounts Recoverable from Reinsurance",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D28+D33+D38+D44+D45)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "future_service_lrc_for_new_onerous_contracts_and_reversal_on_existing_onerous_contracts"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F28+F33+F38+F44+F45)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "future_service_lrc_for_new_onerous_contracts_and_reversal_on_existing_onerous_contracts"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H28+H33+H38+H44+H45)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "future_service_lrc_for_new_onerous_contracts_and_reversal_on_existing_onerous_contracts"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J28+J33+J38+J44+J45)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "incurred_claims_and_other_expenses"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "future_service_lrc_for_new_onerous_contracts_and_reversal_on_existing_onerous_contracts"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "past_service_changes_to_liabilities_for_incurred_claims"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "other_methodology_diff_3"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "investment_components"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "incurred_claims_and_other_expenses",
+          "row": 28,
+          "label": "Incurred claims and other expenses",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D29:D32)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "incurred_in_cy_paid_in_cy",
+                    "incurred_in_cy_os_at_end_cy",
+                    "incurred_in_cy_ibnr_at_end_cy",
+                    "provision_for_risk_of_non_performance_on_new_claims"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F29:F32)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "incurred_in_cy_paid_in_cy",
+                    "incurred_in_cy_os_at_end_cy",
+                    "incurred_in_cy_ibnr_at_end_cy",
+                    "provision_for_risk_of_non_performance_on_new_claims"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H29:H32)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "incurred_in_cy_paid_in_cy",
+                    "incurred_in_cy_os_at_end_cy",
+                    "incurred_in_cy_ibnr_at_end_cy",
+                    "provision_for_risk_of_non_performance_on_new_claims"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J29:J32)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "incurred_in_cy_paid_in_cy",
+                    "incurred_in_cy_os_at_end_cy",
+                    "incurred_in_cy_ibnr_at_end_cy",
+                    "provision_for_risk_of_non_performance_on_new_claims"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "incurred_in_cy_paid_in_cy",
+          "row": 29,
+          "label": "Incurred in CY, Paid in CY",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "incurred_in_cy_os_at_end_cy",
+          "row": 30,
+          "label": "Incurred in CY, OS at end-CY",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+",
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "incurred_in_cy_ibnr_at_end_cy",
+          "row": 31,
+          "label": "Incurred in CY, IBNR at end-CY",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+",
+            "Risk_Adjustment": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "provision_for_risk_of_non_performance_on_new_claims",
+          "row": 32,
+          "label": "Provision for risk of non-performance on new claims",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "future_service_lrc_for_new_onerous_contracts_and_reversal_on_existing_onerous_contracts",
+          "row": 33,
+          "label": "Future Service: LRC for new onerous contracts and reversal on existing onerous contracts",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D34:D35)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "loss_recovery_component_for_new_underlying_onerous_contracts",
+                    "reversal_of_loss_recovery_component_for_existing_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F34:F35)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "loss_recovery_component_for_new_underlying_onerous_contracts",
+                    "reversal_of_loss_recovery_component_for_existing_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H34:H35)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "loss_recovery_component_for_new_underlying_onerous_contracts",
+                    "reversal_of_loss_recovery_component_for_existing_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J34:J35)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "loss_recovery_component_for_new_underlying_onerous_contracts",
+                    "reversal_of_loss_recovery_component_for_existing_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "loss_recovery_component_for_new_underlying_onerous_contracts",
+          "row": 34,
+          "label": "Loss Recovery Component for new underlying onerous contracts",
+          "level": 0,
+          "signs": {
+            "Loss_Recovery_Component": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "reversal_of_loss_recovery_component_for_existing_underlying_onerous_contracts",
+          "row": 35,
+          "label": "Reversal of Loss Recovery Component for existing underlying  onerous contracts",
+          "level": 1,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D36:D37)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "reversal_amortization_of_lrc_following_an_assumed_patttern",
+                    "change_in_lrc_due_to_changes_in_assumptions_for_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F36:F37)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "reversal_amortization_of_lrc_following_an_assumed_patttern",
+                    "change_in_lrc_due_to_changes_in_assumptions_for_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H36:H37)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "reversal_amortization_of_lrc_following_an_assumed_patttern",
+                    "change_in_lrc_due_to_changes_in_assumptions_for_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J36:J37)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "reversal_amortization_of_lrc_following_an_assumed_patttern",
+                    "change_in_lrc_due_to_changes_in_assumptions_for_underlying_onerous_contracts"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "reversal_amortization_of_lrc_following_an_assumed_patttern",
+          "row": 36,
+          "label": "Reversal/amortization of LRC following an assumed patttern",
+          "level": 3,
+          "signs": {
+            "Loss_Recovery_Component": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_lrc_due_to_changes_in_assumptions_for_underlying_onerous_contracts",
+          "row": 37,
+          "label": "Change in LRC due to changes in assumptions for underlying onerous contracts",
+          "level": 3,
+          "signs": {
+            "Loss_Recovery_Component": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "past_service_changes_to_liabilities_for_incurred_claims",
+          "row": 38,
+          "label": "Past Service: Changes to liabilities for incurred claims",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=D39+D43",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "change_in_ultimate_for_past_service"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "change_in_provision_for_risk_of_ri_non_performance"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=F39+F43",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "change_in_ultimate_for_past_service"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "change_in_provision_for_risk_of_ri_non_performance"
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=H39+H43",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "change_in_ultimate_for_past_service"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "change_in_provision_for_risk_of_ri_non_performance"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=J39+J43",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "change_in_ultimate_for_past_service"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "change_in_provision_for_risk_of_ri_non_performance"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "change_in_ultimate_for_past_service",
+          "row": 39,
+          "label": "Change in Ultimate for Past Service",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D40:D42)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "paid_in_cy",
+                    "change_in_os_in_cy",
+                    "change_in_ibnr_in_cy"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F40:F42)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "paid_in_cy",
+                    "change_in_os_in_cy",
+                    "change_in_ibnr_in_cy"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H40:H42)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "paid_in_cy",
+                    "change_in_os_in_cy",
+                    "change_in_ibnr_in_cy"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J40:J42)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "paid_in_cy",
+                    "change_in_os_in_cy",
+                    "change_in_ibnr_in_cy"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "paid_in_cy",
+          "row": 40,
+          "label": "Paid in CY",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_os_in_cy",
+          "row": 41,
+          "label": "Change in OS in CY",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_ibnr_in_cy",
+          "row": 42,
+          "label": "Change in IBNR in CY",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "change_in_provision_for_risk_of_ri_non_performance",
+          "row": 43,
+          "label": "Change in Provision for risk of RI non-performance",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_methodology_diff_3",
+          "row": 44,
+          "label": "Other methodology diff",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "investment_components",
+          "row": 45,
+          "label": "Investment components",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D46)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "change_in_profit_commission_sliding_scale_commission"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F46)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "change_in_profit_commission_sliding_scale_commission"
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H46)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "change_in_profit_commission_sliding_scale_commission"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J46)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "change_in_profit_commission_sliding_scale_commission"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "change_in_profit_commission_sliding_scale_commission",
+          "row": 46,
+          "label": "Change in Profit Commission/ Sliding Scale commission",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "reinsurance_service_result",
+          "row": 47,
+          "label": "Reinsurance service result",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=D27-D21",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "amounts_recoverable_from_reinsurance"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "amounts_allocated_to_reinsurance"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=F27-F21",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "amounts_recoverable_from_reinsurance"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "amounts_allocated_to_reinsurance"
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=H27-H21",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "amounts_recoverable_from_reinsurance"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "amounts_allocated_to_reinsurance"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=J27-J21",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "amounts_recoverable_from_reinsurance"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "amounts_allocated_to_reinsurance"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "reinsurance_finance_expenses_income",
+          "row": 48,
+          "label": "Reinsurance finance expenses/income",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D49:D50)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "reinsurance_finance_expenses_income_p_l",
+                    "reinsurance_finance_expenses_income_oci"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F49:F50)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "reinsurance_finance_expenses_income_p_l",
+                    "reinsurance_finance_expenses_income_oci"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H49:H50)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "reinsurance_finance_expenses_income_p_l",
+                    "reinsurance_finance_expenses_income_oci"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J49:J50)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "reinsurance_finance_expenses_income_p_l",
+                    "reinsurance_finance_expenses_income_oci"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "reinsurance_finance_expenses_income_p_l",
+          "row": 49,
+          "label": "Reinsurance finance expenses/income - P&L",
+          "level": 1,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-",
+            "Loss_Recovery_Component": "+/-",
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "reinsurance_finance_expenses_income_oci",
+          "row": 50,
+          "label": "Reinsurance finance expenses/income - OCI",
+          "level": 1,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-",
+            "Loss_Recovery_Component": "+/-",
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "effect_of_movements_in_exchange_rates",
+          "row": 51,
+          "label": "Effect of movements in exchange rates",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-",
+            "Loss_Recovery_Component": "+/-",
+            "Amounts_Recoverable_IC": "+/-",
+            "Risk_Adjustment": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_movements",
+          "row": 52,
+          "label": "Other movements",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D53:D54)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "item_1_specify",
+                    "item_2_specify"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F53:F54)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "item_1_specify",
+                    "item_2_specify"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H53:H54)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "item_1_specify",
+                    "item_2_specify"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J53:J54)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "item_1_specify",
+                    "item_2_specify"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "item_1_specify",
+          "row": 53,
+          "label": "Item 1 (Specify)",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "item_2_specify",
+          "row": 54,
+          "label": "Item 2 (Specify)",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "total_changes_in_the_statement_of_profit_or_loss_and_oci",
+          "row": 55,
+          "label": "Total changes in the statement of profit or loss and OCI",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=D52+D51+D48+D47",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "reinsurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "reinsurance_service_result"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=F52+F51+F48+F47",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "reinsurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "reinsurance_service_result"
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=H52+H51+H48+H47",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "reinsurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "reinsurance_service_result"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=J52+J51+J48+J47",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "other_movements"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "effect_of_movements_in_exchange_rates"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "reinsurance_finance_expenses_income"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "reinsurance_service_result"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "cash_flows",
+          "row": 56,
+          "label": "Cash flows",
+          "level": 0,
+          "signs": {},
+          "kind": "section"
+        },
+        {
+          "id": "premium_paid",
+          "row": 57,
+          "label": "Premium Paid",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "claims_received",
+          "row": 58,
+          "label": "Claims received",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "fixed_commission_received",
+          "row": 59,
+          "label": "Fixed Commission received",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "profit_commission_sliding_scale_commission_received",
+          "row": 60,
+          "label": "Profit Commission/Sliding scale Commission received",
+          "level": 0,
+          "signs": {
+            "Amounts_Recoverable_IC": "+"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "other_cash_flows",
+          "row": 61,
+          "label": "Other Cash Flows",
+          "level": 0,
+          "signs": {
+            "Assets_Remaining_Coverage": "+/-",
+            "Amounts_Recoverable_IC": "+/-"
+          },
+          "kind": "input"
+        },
+        {
+          "id": "total_cash_flows",
+          "row": 62,
+          "label": "Total Cash Flows",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=SUM(D57:D61)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "lines": [
+                    "premium_paid",
+                    "claims_received",
+                    "fixed_commission_received",
+                    "profit_commission_sliding_scale_commission_received",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=SUM(F57:F61)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Loss_Recovery_Component",
+                  "lines": [
+                    "premium_paid",
+                    "claims_received",
+                    "fixed_commission_received",
+                    "profit_commission_sliding_scale_commission_received",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=SUM(H57:H61)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "lines": [
+                    "premium_paid",
+                    "claims_received",
+                    "fixed_commission_received",
+                    "profit_commission_sliding_scale_commission_received",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=SUM(J57:J61)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Risk_Adjustment",
+                  "lines": [
+                    "premium_paid",
+                    "claims_received",
+                    "fixed_commission_received",
+                    "profit_commission_sliding_scale_commission_received",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            },
+            "Total": {
+              "excel": "=SUM(K57:K61)",
+              "refs": [
+                {
+                  "op": "sum_range",
+                  "bucket": "Total",
+                  "lines": [
+                    "premium_paid",
+                    "claims_received",
+                    "fixed_commission_received",
+                    "profit_commission_sliding_scale_commission_received",
+                    "other_cash_flows"
+                  ]
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "subtotal"
+        },
+        {
+          "id": "reinsurance_contract_assets_liabilities_as_at_30_06",
+          "row": 63,
+          "label": "Reinsurance contract assets/(liabilities) as at 30/06",
+          "level": 0,
+          "signs": {},
+          "formulas": {
+            "Assets_Remaining_Coverage": {
+              "excel": "=D4+(D55-D62)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "reinsurance_contract_assets_liabilities_as_at_01_01"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "total_changes_in_the_statement_of_profit_or_loss_and_oci"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Assets_Remaining_Coverage",
+                  "line": "total_cash_flows"
+                }
+              ],
+              "internal": true
+            },
+            "Loss_Recovery_Component": {
+              "excel": "=F4+(F55-F62)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "reinsurance_contract_assets_liabilities_as_at_01_01"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "total_changes_in_the_statement_of_profit_or_loss_and_oci"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Loss_Recovery_Component",
+                  "line": "total_cash_flows"
+                }
+              ],
+              "internal": true
+            },
+            "Amounts_Recoverable_IC": {
+              "excel": "=H4+(H55-H62)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "reinsurance_contract_assets_liabilities_as_at_01_01"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "total_changes_in_the_statement_of_profit_or_loss_and_oci"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Amounts_Recoverable_IC",
+                  "line": "total_cash_flows"
+                }
+              ],
+              "internal": true
+            },
+            "Risk_Adjustment": {
+              "excel": "=J4+(J55-J62)",
+              "refs": [
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "reinsurance_contract_assets_liabilities_as_at_01_01"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "total_changes_in_the_statement_of_profit_or_loss_and_oci"
+                },
+                {
+                  "op": "cell",
+                  "bucket": "Risk_Adjustment",
+                  "line": "total_cash_flows"
+                }
+              ],
+              "internal": true
+            }
+          },
+          "kind": "closing"
+        }
+      ]
+    }
+  }
+}

@@ -194,6 +194,7 @@ CELERY_TASK_ROUTES = {
     'processing.tasks.run_module1_uw_parameters_task': {'queue': 'compute'},
     'processing.tasks.run_module2_allocate_task': {'queue': 'compute'},
     'processing.tasks.run_module2_process_task': {'queue': 'compute'},
+    'processing.tasks.run_module2_movement_task': {'queue': 'compute'},
     'processing.tasks.purge_expired_outputs_task': {'queue': 'retention'},
     'processing.tasks.cascade_purge_task': {'queue': 'retention'},
 }

@@ -57,6 +57,26 @@ EXPENSE_CF_DB_TO_EXCEL = {
     "rec_gop_curr": "Rec_GOP_curr",
     "rec_provision_prev": "Rec_Provision_prev",
     "rec_provision_curr": "Rec_Provision_curr",
+    # Cash-flow lines (current period). Headers read verbatim by the engine —
+    # note the preserved "Acquistion" typo in "Other Acquistion Cash Flows".
+    "premium_received": "Premium Received",
+    "claims_paid": "Claims Paid",
+    "insurance_acquisition_cash_flows": "Insurance Acquisition Cash flows",
+    "other_cash_flows": "Other Cash Flows",
+    "ri_premium_paid": "RI Premium Paid",
+    "ri_claims_received": "RI Claims received",
+    "ri_fixed_commission_received": "RI Fixed Commission received",
+    "directly_attributable_expenses": "Directly Attributable Expenses, excluding Insurance Acquisition cash flows",
+    "other_acquisition_cash_flows": "Other Acquistion Cash Flows",
+    # Prev/curr balance components (LIC pipeline + RI provisions).
+    "ri_rec_gop_prev": "RI_Rec_GOP_prev",
+    "ri_rec_gop_curr": "RI_Rec_GOP_curr",
+    "claim_pay_prev": "Claim_Pay_prev",
+    "claim_pay_curr": "Claim_Pay_curr",
+    "ri_payable_prev": "RI_Payable_prev",
+    "ri_payable_curr": "RI_Payable_curr",
+    "ri_rec_provision_prev": "RI Rec Provision_prev",
+    "ri_rec_provision_curr": "RI Rec Provision_curr",
 }
 
 # LIC_BOP sheet — engine reads these column headers verbatim (with spaces

@@ -13,6 +13,7 @@ class Module1Job(models.Model):
         UW_PARAMETERS = "uw_parameters", "UW Parameters"
         MODULE2_ALLOCATE = "module2_allocate", "Module2 Allocate"
         MODULE2_PROCESS = "module2_process", "Module2 Process"
+        MODULE2_MOVEMENT = "module2_movement", "IFRS 17 Movement Analysis"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

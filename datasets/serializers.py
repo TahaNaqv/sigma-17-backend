@@ -181,6 +181,23 @@ class ExpenseCfRowSerializer(_RowBaseSerializer):
             "rec_gop_curr",
             "rec_provision_prev",
             "rec_provision_curr",
+            "premium_received",
+            "claims_paid",
+            "insurance_acquisition_cash_flows",
+            "other_cash_flows",
+            "ri_premium_paid",
+            "ri_claims_received",
+            "ri_fixed_commission_received",
+            "directly_attributable_expenses",
+            "other_acquisition_cash_flows",
+            "ri_rec_gop_prev",
+            "ri_rec_gop_curr",
+            "claim_pay_prev",
+            "claim_pay_curr",
+            "ri_payable_prev",
+            "ri_payable_curr",
+            "ri_rec_provision_prev",
+            "ri_rec_provision_curr",
         )
 
 

@@ -57,6 +57,7 @@ from .tasks import (
     run_module1_update_reserve_task,
     run_module1_uw_parameters_task,
     run_module2_allocate_task,
+    run_module2_movement_task,
     run_module2_process_task,
 )
 from .utils import (
@@ -78,6 +79,7 @@ MODULE1_JOB_TYPES = {
 MODULE2_JOB_TYPES = {
     Module1Job.JobType.MODULE2_ALLOCATE,
     Module1Job.JobType.MODULE2_PROCESS,
+    Module1Job.JobType.MODULE2_MOVEMENT,
 }
 ALL_JOB_TYPES = MODULE1_JOB_TYPES | MODULE2_JOB_TYPES
 
@@ -1264,6 +1266,155 @@ class Module2ProcessJobView(APIView):
         job.input_meta = meta
         job.save(update_fields=["input_meta"])
         run_module2_process_task.delay(str(job.id))
+        return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
+
+
+class Module2MovementJobView(APIView):
+    """POST /api/module2/jobs/movement/ — IFRS 17 movement-analysis disclosure.
+
+    Same inputs as the process job (chains off an allocate job for Combined_Summary,
+    plus Previous Period + Expense CF via file upload or dataset), with two extra
+    parameters: ``reporting_date`` (label for the closing column; opening is always
+    01/01 — plan §3b) and an optional ``scope`` (reserving_classes / uwys) to limit
+    which (class, UWY) tables are produced. Output previews via the existing
+    module2 output endpoints.
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def post(self, request):
+        allocate_job_id = request.POST.get("allocate_job_id")
+        accounting_period = request.POST.get("accounting_period")
+        selected_ulr_raw = request.POST.get("selected_ulr", "[]")
+        reporting_date = (request.POST.get("reporting_date") or "").strip() or None
+        previous = request.FILES.get("previous_period")
+        expense = request.FILES.get("expense_cf")
+
+        expense_cf_ds_id = (request.POST.get("expense_cf_dataset_id") or "").strip()
+        previous_lic_ds_id = (request.POST.get("previous_period_lic_dataset_id") or "").strip()
+        previous_upr_ds_id = (request.POST.get("previous_period_upr_dataset_id") or "").strip()
+
+        # XOR per slot — identical contract to the process job.
+        if expense and expense_cf_ds_id:
+            raise ValidationError({"detail": "Provide expense_cf or expense_cf_dataset_id, not both."})
+        if not expense and not expense_cf_ds_id:
+            raise ValidationError({"expense_cf": "Provide expense_cf or expense_cf_dataset_id."})
+        previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id)
+        if previous and previous_via_dataset:
+            raise ValidationError({"detail": "Provide previous_period or previous_period_{lic,upr}_dataset_id, not both."})
+        if not previous and not previous_via_dataset:
+            raise ValidationError({"previous_period": "Provide previous_period file or both LIC+UPR dataset ids."})
+        if previous_via_dataset and not (previous_lic_ds_id and previous_upr_ds_id):
+            raise ValidationError({"detail": "Both previous_period_lic_dataset_id AND previous_period_upr_dataset_id are required for the dataset path."})
+        if previous and not previous.name.lower().endswith(".xlsx"):
+            raise ValidationError({"detail": "Only .xlsx files are supported."})
+        if expense and not expense.name.lower().endswith(".xlsx"):
+            raise ValidationError({"detail": "Only .xlsx files are supported."})
+
+        try:
+            selected_ulr = json.loads(selected_ulr_raw)
+        except json.JSONDecodeError as exc:
+            raise ValidationError({"selected_ulr": "Invalid JSON."}) from exc
+
+        # Optional scope: reserving_classes / uwys as JSON arrays.
+        scope = {}
+        for field, caster in (("reserving_classes", str), ("uwys", int)):
+            raw = request.POST.get(field)
+            if not raw:
+                continue
+            try:
+                values = json.loads(raw)
+                scope[field] = [caster(v) for v in values]
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValidationError({field: "Must be a JSON array."}) from exc
+
+        payload_serializer = Module2ProcessRequestSerializer(
+            data={
+                "allocate_job_id": allocate_job_id,
+                "accounting_period": accounting_period,
+                "selected_ulr": selected_ulr,
+            }
+        )
+        payload_serializer.is_valid(raise_exception=True)
+        payload = payload_serializer.validated_data
+
+        allocate_job = resolve_source_job(
+            request=request,
+            source_job_id=payload["allocate_job_id"],
+            artifact=ARTIFACT_COMBINED_SUMMARY,
+            field_name="allocate_job_id",
+        )
+        if allocate_job.job_type != Module1Job.JobType.MODULE2_ALLOCATE:
+            raise ValidationError({"allocate_job_id": "Must reference a module2 allocate job."})
+
+        expense_datasets = _resolve_datasets(
+            request,
+            ids=[expense_cf_ds_id] if expense_cf_ds_id else [],
+            expected_kind=Dataset.Kind.EXPENSE_CF,
+            field_name="expense_cf_dataset_id",
+        )
+        previous_lic_datasets = _resolve_datasets(
+            request,
+            ids=[previous_lic_ds_id] if previous_lic_ds_id else [],
+            expected_kind=Dataset.Kind.PREVIOUS_PERIOD_LIC,
+            field_name="previous_period_lic_dataset_id",
+        )
+        previous_upr_datasets = _resolve_datasets(
+            request,
+            ids=[previous_upr_ds_id] if previous_upr_ds_id else [],
+            expected_kind=Dataset.Kind.PREVIOUS_PERIOD_UPR,
+            field_name="previous_period_upr_dataset_id",
+        )
+
+        upload_files = [f for f in (previous, expense) if f]
+        if upload_files:
+            _check_upload_budget(upload_files)
+        job = _create_job(
+            request,
+            job_type=Module1Job.JobType.MODULE2_MOVEMENT,
+            input_meta={
+                "allocate_job_id": str(allocate_job.id),
+                "accounting_period": payload["accounting_period"],
+                "selected_ulr": payload["selected_ulr"],
+                "reporting_date": reporting_date,
+                "scope": scope,
+            },
+            source_job=allocate_job,
+            source_artifact=ARTIFACT_COMBINED_SUMMARY,
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        previous_dir, expense_dir = init_module2_process_job_dirs(job)
+
+        meta_files = {}
+        if previous:
+            with (previous_dir / "Previous_Period.xlsx").open("wb") as outf:
+                for chunk in previous.chunks():
+                    outf.write(chunk)
+            meta_files["previous_period"] = {"name": previous.name, "size": previous.size}
+        if expense:
+            with (expense_dir / "Expense_CF.xlsx").open("wb") as outf:
+                for chunk in expense.chunks():
+                    outf.write(chunk)
+            meta_files["expense_cf"] = {"name": expense.name, "size": expense.size}
+
+        dataset_snapshots = {}
+        if expense_datasets:
+            dataset_snapshots["expense_cf"] = _snapshot_for_job(expense_datasets, job)
+        if previous_lic_datasets:
+            dataset_snapshots["previous_period_lic"] = _snapshot_for_job(previous_lic_datasets, job)
+        if previous_upr_datasets:
+            dataset_snapshots["previous_period_upr"] = _snapshot_for_job(previous_upr_datasets, job)
+
+        meta = job.input_meta or {}
+        meta["files"] = meta_files
+        meta["dataset_snapshots"] = dataset_snapshots
+        job.input_meta = meta
+        job.save(update_fields=["input_meta"])
+        run_module2_movement_task.delay(str(job.id))
         return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
 
 

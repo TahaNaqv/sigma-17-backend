@@ -272,8 +272,11 @@ class ClaimsOSRow(_BaseRow):
 class ExpenseCfRow(_BaseRow):
     """One row of the Expense-CF sheet (Module 2 Process input).
 
-    Matches the columns the Module 2 engine reads from `Expense-CF`:
-    `RESERVINGCLASS`, `UWY`, and the prev/curr expense components.
+    Full Expense-CF schema the Module 2 engine reads from `Expense-CF`:
+    `RESERVINGCLASS`, `UWY`, the prev/curr balance components, and the
+    current-period cash-flow lines. The cash-flow + RI columns also feed the
+    IFRS 17 movement disclosure (see module2_engine/movement). `Claim_Pay_*`
+    is required by the engine's `create_lic_table`.
     """
 
     reserving_class = models.CharField(max_length=128, db_index=True)
@@ -296,6 +299,60 @@ class ExpenseCfRow(_BaseRow):
     rec_provision_curr = models.DecimalField(
         max_digits=18, decimal_places=2, null=True, blank=True
     )  # Rec_Provision_curr
+    # --- Cash-flow lines (current period) — feed the movement disclosure
+    #     cash-flow + RI sections. Engine reads these headers verbatim. ---
+    premium_received = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Premium Received
+    claims_paid = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Claims Paid
+    insurance_acquisition_cash_flows = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Insurance Acquisition Cash flows
+    other_cash_flows = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Other Cash Flows
+    ri_premium_paid = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI Premium Paid
+    ri_claims_received = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI Claims received
+    ri_fixed_commission_received = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI Fixed Commission received
+    directly_attributable_expenses = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Directly Attributable Expenses, excluding Insurance Acquisition cash flows
+    other_acquisition_cash_flows = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Other Acquistion Cash Flows  (engine header typo preserved)
+    # --- Prev/curr balance components (LIC pipeline + RI provisions) ---
+    ri_rec_gop_prev = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI_Rec_GOP_prev
+    ri_rec_gop_curr = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI_Rec_GOP_curr
+    claim_pay_prev = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Claim_Pay_prev  (required by engine create_lic_table)
+    claim_pay_curr = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # Claim_Pay_curr
+    ri_payable_prev = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI_Payable_prev
+    ri_payable_curr = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI_Payable_curr
+    ri_rec_provision_prev = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI Rec Provision_prev
+    ri_rec_provision_curr = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )  # RI Rec Provision_curr
 
     class Meta(_BaseRow.Meta):
         indexes = [

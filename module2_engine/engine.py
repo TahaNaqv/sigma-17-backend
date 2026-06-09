@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -719,13 +720,34 @@ def run_module2_allocate(combined_summary_bytes: bytes) -> dict[str, Any]:
     return {"workbook_bytes": out_bytes, "ulr_rows": ulr_rows}
 
 
-def run_module2_process(
+@dataclass(frozen=True)
+class ProcessFrames:
+    """In-memory intermediates produced by the Module 2 process pipeline.
+
+    Shared source of truth for both the standard process workbook and the IFRS 17
+    movement disclosure (module2_engine.movement). Reusing these frames — rather
+    than re-reading the serialized output — is required: the xlsx round-trip
+    normalises dtypes and the movement/IFRS math is sensitive to it (see the NB in
+    ``_process_intermediates``).
+    """
+
+    allocate_sheets: dict[str, "pd.DataFrame"]
+    result_df: "pd.DataFrame"  # -> "Movement Analysis" sheet
+    ifrs_summary_df: "pd.DataFrame"  # -> "IFRS Summary" sheet (incl. UPR + expense merges)
+
+
+def _process_intermediates(
     combined_summary_bytes: bytes,
     previous_period_bytes: bytes,
     expense_cf_bytes: bytes,
     accounting_period: int,
     selected_ulr_rows: list[dict[str, Any]],
-) -> bytes:
+) -> ProcessFrames:
+    """Run the Module 2 process pipeline up to the IFRS Summary frame.
+
+    Extracted from ``run_module2_process`` so the movement disclosure can consume
+    the same in-memory frames without the dtype-sensitive xlsx round-trip.
+    """
     # Rebuild allocate outputs with selected ULR; reuse the in-memory frames
     # instead of re-reading the workbook we just produced (plan §2.2).
     out_bytes, _, allocate_sheets = _build_allocate_outputs(combined_summary_bytes, selected_ulr_rows)
@@ -767,6 +789,30 @@ def run_module2_process(
     )
     ifrs_summary_df = ifrs_summary_df.merge(prev_upr, on=["RESERVINGCLASS", "UWY"], how="left")
     ifrs_summary_df = ifrs_summary_df.merge(expense_cf, on=["RESERVINGCLASS", "UWY"], how="left")
+    return ProcessFrames(
+        allocate_sheets=allocate_sheets,
+        result_df=result_df,
+        ifrs_summary_df=ifrs_summary_df,
+    )
+
+
+def run_module2_process(
+    combined_summary_bytes: bytes,
+    previous_period_bytes: bytes,
+    expense_cf_bytes: bytes,
+    accounting_period: int,
+    selected_ulr_rows: list[dict[str, Any]],
+) -> bytes:
+    frames = _process_intermediates(
+        combined_summary_bytes,
+        previous_period_bytes,
+        expense_cf_bytes,
+        accounting_period,
+        selected_ulr_rows,
+    )
+    allocate_sheets = frames.allocate_sheets
+    result_df = frames.result_df
+    ifrs_summary_df = frames.ifrs_summary_df
 
     def create_lrc_table(df: pd.DataFrame, components_dict: dict[str, int]) -> pd.DataFrame:
         table = df.groupby("RESERVINGCLASS")[list(components_dict.keys())].sum().reset_index()
@@ -835,3 +881,39 @@ def run_module2_process(
         lic_prev_with_header.to_excel(writer, index=False, sheet_name="LIC BOP-EOP Reconciliation", startrow=0)
         lic_curr_with_header.to_excel(writer, index=False, sheet_name="LIC BOP-EOP Reconciliation", startrow=startrow_lic_curr)
     return final.getvalue()
+
+
+def run_module2_movement(
+    combined_summary_bytes: bytes,
+    previous_period_bytes: bytes,
+    expense_cf_bytes: bytes,
+    accounting_period: int,
+    selected_ulr_rows: list[dict[str, Any]],
+    *,
+    reporting_date: str | None = None,
+    classes: list[str] | None = None,
+    uwys: list[int] | None = None,
+) -> tuple[bytes, Any]:
+    """Produce the IFRS 17 movement-analysis disclosure workbook.
+
+    Reuses the same in-memory ``ProcessFrames`` as ``run_module2_process`` (no
+    dtype-sensitive round-trip), projects them into the per-(class, UWY) SAMA
+    Gross + RI tables, and renders the workbook. Returns ``(xlsx_bytes, result)``
+    where ``result`` is the MovementResult (carries warnings / missing columns).
+    Mapping is PROPOSED pending actuarial sign-off (plan gate #1).
+    """
+    # Local imports: keep the movement package out of the engine import graph
+    # until actually used (it pulls schema/mapping JSON at import).
+    from module2_engine.movement.compute import build_sama_movement
+    from module2_engine.movement.workbook import render_sama_workbook
+
+    frames = _process_intermediates(
+        combined_summary_bytes,
+        previous_period_bytes,
+        expense_cf_bytes,
+        accounting_period,
+        selected_ulr_rows,
+    )
+    result = build_sama_movement(frames, classes=classes, uwys=uwys)
+    xlsx = render_sama_workbook(result, reporting_date=reporting_date)
+    return xlsx, result

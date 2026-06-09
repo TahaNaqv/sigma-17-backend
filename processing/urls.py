@@ -30,6 +30,7 @@ urlpatterns = [
     path("module2/jobs/", views.Module2JobListView.as_view()),
     path("module2/jobs/allocate/", views.Module2AllocateJobView.as_view()),
     path("module2/jobs/process/", views.Module2ProcessJobView.as_view()),
+    path("module2/jobs/movement/", views.Module2MovementJobView.as_view()),
     path("module2/jobs/<uuid:pk>/ulr/", views.Module2JobUlrRowsView.as_view()),
     path("module2/jobs/<uuid:pk>/", views.Module2JobDetailView.as_view()),
     path("module2/jobs/<uuid:pk>/download/", views.Module2JobDownloadView.as_view()),

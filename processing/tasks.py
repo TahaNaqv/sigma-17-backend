@@ -13,7 +13,7 @@ from module1_engine import (
     run_policy_level_upr,
     run_update_reserve_summary,
 )
-from module2_engine import run_module2_allocate, run_module2_process
+from module2_engine import run_module2_allocate, run_module2_movement, run_module2_process
 from processing.models import Module1Job
 from processing.services.retention import (
     cascade_purge as _cascade_purge,
@@ -470,6 +470,67 @@ def run_module2_process_task(self, job_id: str) -> None:
         logger.info("module2_process.success", extra=_log_extra(job))
     except Exception as exc:
         logger.exception("module2_process.failed", extra=_log_extra(job))
+        _mark_failed(job, exc, normalizer=_normalize_module2_error)
+    finally:
+        _cleanup_root(job)
+
+
+@shared_task(bind=True, ignore_result=True)
+def run_module2_movement_task(self, job_id: str) -> None:
+    """IFRS 17 movement-analysis disclosure. Same inputs as module2_process
+    (chained off an allocate job for Combined_Summary, plus Previous_Period +
+    Expense_CF), projected into the per-(class, UWY) SAMA Gross + RI tables.
+    """
+    job = Module1Job.objects.select_related("organization", "source_job").get(pk=job_id)
+    job.status = Module1Job.Status.RUNNING
+    job.started_at = timezone.now()
+    job.save(update_fields=["status", "started_at"])
+    logger.info("module2_movement.start", extra=_log_extra(job))
+
+    out_dir = job_output_dir(job)
+    previous_path = job_root(job) / "in" / "module2" / "previous" / "Previous_Period.xlsx"
+    expense_path = job_root(job) / "in" / "module2" / "expense" / "Expense_CF.xlsx"
+    try:
+        meta = job.input_meta or {}
+        selected_ulr = meta.get("selected_ulr") or []
+        accounting_period = int(meta.get("accounting_period"))
+        reporting_date = meta.get("reporting_date")
+        scope = meta.get("scope") or {}
+
+        _materialize_job_snapshots(job)
+        if not job.source_job_id:
+            raise ValueError("Module 2 movement requires a source allocate job.")
+        combined_bytes = read_artifact_bytes(
+            source_job=job.source_job, artifact=ARTIFACT_COMBINED_SUMMARY
+        )
+
+        xlsx, result = run_module2_movement(
+            combined_bytes,
+            previous_path.read_bytes(),
+            expense_path.read_bytes(),
+            accounting_period,
+            selected_ulr,
+            reporting_date=reporting_date,
+            classes=scope.get("reserving_classes") or None,
+            uwys=scope.get("uwys") or None,
+        )
+        (out_dir / "IFRS17_Movement_Analysis.xlsx").write_bytes(xlsx)
+        # Record non-fatal projection diagnostics (missing-column gaps) on the job
+        # so the UI can surface them without cracking the workbook.
+        if result.missing_columns:
+            meta["movement_warnings"] = {
+                "missing_columns": sorted(result.missing_columns),
+                "pairs": len(result.pairs),
+            }
+            job.input_meta = meta
+            job.save(update_fields=["input_meta"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")
+            _finalize_success(job, out_dir, zip_path)
+        logger.info("module2_movement.success", extra=_log_extra(job))
+    except Exception as exc:
+        logger.exception("module2_movement.failed", extra=_log_extra(job))
         _mark_failed(job, exc, normalizer=_normalize_module2_error)
     finally:
         _cleanup_root(job)
