@@ -105,3 +105,17 @@ def test_rollforward_and_residual_identities_hold():
 def test_both_sheets_emitted_per_pair():
     res = C.build_sama_movement(_frames([_base_row()]))
     assert set(res.pairs[0].sheets) == {"Gross", "RI"}
+
+
+def test_cy_py_payment_side_frame_is_consumed():
+    """§9.1: the movement-only CY/PY Paid split feeds the incurred/past-service
+    paid lines (which would otherwise resolve to 0)."""
+    f = _frames([_base_row()])
+    f.cy_py_payment = pd.DataFrame(
+        [{"RESERVINGCLASS": "TEST", "UWY": 2023,
+          "GROSS - CY Payment": 100.0, "GROSS - PY Payment": -50.0,
+          "RI - CY Payment": 0.0, "RI - PY Payment": 0.0}]
+    )
+    g = C.build_sama_movement(f).pairs[0].sheets["Gross"]
+    assert g.line_values["incurred_in_cy_paid_in_cy"]["LIC_excl_RA"] == 100.0
+    assert g.line_values["paid_in_cy"]["LIC_excl_RA"] == -50.0

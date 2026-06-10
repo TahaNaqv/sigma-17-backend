@@ -215,6 +215,12 @@ def build_sama_movement(frames, *, classes=None, uwys=None) -> MovementResult:
     if lc is not None:
         ifrs = ifrs.merge(lc, on=["RESERVINGCLASS", "UWY"], how="left", suffixes=("", "_lc"))
     ifrs["UWY"] = ifrs["UWY"].astype(int)
+    # Additive CY/PY Paid split (movement-only; absent on legacy/synthetic frames).
+    cy_py = getattr(frames, "cy_py_payment", None)
+    if cy_py is not None:
+        cy_py = cy_py.copy()
+        cy_py["UWY"] = cy_py["UWY"].astype(int)
+        ifrs = ifrs.merge(cy_py, on=["RESERVINGCLASS", "UWY"], how="left", suffixes=("", "_cypy"))
     columns = set(map(str, ifrs.columns))
     mapping = _load_mapping()
     result = MovementResult()

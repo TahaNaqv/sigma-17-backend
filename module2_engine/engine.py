@@ -720,6 +720,52 @@ def run_module2_allocate(combined_summary_bytes: bytes) -> dict[str, Any]:
     return {"workbook_bytes": out_bytes, "ulr_rows": ulr_rows}
 
 
+def _derive_cy_py_payment(
+    current_main: pd.DataFrame, previous_df: pd.DataFrame, accounting_period: int
+) -> pd.DataFrame:
+    """Derive the current-year / prior-year *Paid* split per (class, UWY) for the
+    movement disclosure, WITHOUT touching the shared process output.
+
+    ``pivot_and_calculate_differences`` drops ``CY Payment`` / ``PY Payment`` from
+    ``result_df`` (engine.py — they never reach the "Movement Analysis" / "IFRS
+    Summary" sheets), so changing that drop would alter bit-identical process output.
+    Instead we recompute just these two measures here from the same raw frames and
+    return an additive `(RESERVINGCLASS, UWY)` frame the movement layer merges into
+    its own working copy. Replicates the engine's accident-year classification so the
+    numbers match what the un-dropped columns would have been.
+    """
+    keys = ["RESERVINGCLASS", "UWY", "Accident_Period", "GROSS/RI"]
+    cur = current_main.copy()
+    prev = previous_df.copy()
+    for df in (cur, prev):
+        df["Accident_Period"] = (
+            df["Accident_Period"].fillna("0-0").astype(str).apply(lambda x: int(x.split("-")[0]))
+        )
+    cur["CY Payment"] = cur.apply(
+        lambda r: r["Payment"] if r["Accident_Period"] == accounting_period else 0, axis=1
+    )
+    cur_p = cur.pivot_table(index=keys, values=["Payment", "CY Payment"], aggfunc="sum").reset_index()
+    prev_p = prev.pivot_table(index=keys, values=["Payment"], aggfunc="sum").reset_index()
+    merged = cur_p.merge(prev_p, on=keys, how="outer", suffixes=("_curr", "_prev")).fillna(0)
+    merged["PY Payment"] = merged.apply(
+        lambda r: r["Payment_curr"] - r["Payment_prev"] if r["Accident_Period"] != accounting_period else 0,
+        axis=1,
+    )
+    agg = (
+        merged.groupby(["RESERVINGCLASS", "UWY", "GROSS/RI"])[["CY Payment", "PY Payment"]]
+        .sum()
+        .reset_index()
+    )
+    piv = agg.pivot_table(
+        index=["RESERVINGCLASS", "UWY"], columns="GROSS/RI", values=["CY Payment", "PY Payment"], aggfunc="sum"
+    )
+    # Match the IFRS Summary naming: "<GROSS/RI> - <measure>" e.g. "GROSS - CY Payment".
+    piv.columns = [f"{col[1]} - {col[0]}" for col in piv.columns]
+    piv = piv.reset_index().fillna(0)
+    piv["UWY"] = piv["UWY"].astype(int)
+    return piv
+
+
 @dataclass(frozen=True)
 class ProcessFrames:
     """In-memory intermediates produced by the Module 2 process pipeline.
@@ -734,6 +780,9 @@ class ProcessFrames:
     allocate_sheets: dict[str, "pd.DataFrame"]
     result_df: "pd.DataFrame"  # -> "Movement Analysis" sheet
     ifrs_summary_df: "pd.DataFrame"  # -> "IFRS Summary" sheet (incl. UPR + expense merges)
+    # Additive, movement-only: CY/PY Paid split per (class, UWY). Not written to the
+    # process workbook — keeps process output bit-identical. None for legacy callers.
+    cy_py_payment: "pd.DataFrame | None" = None
 
 
 def _process_intermediates(
@@ -789,10 +838,13 @@ def _process_intermediates(
     )
     ifrs_summary_df = ifrs_summary_df.merge(prev_upr, on=["RESERVINGCLASS", "UWY"], how="left")
     ifrs_summary_df = ifrs_summary_df.merge(expense_cf, on=["RESERVINGCLASS", "UWY"], how="left")
+    # Movement-only side frame; process output is unaffected.
+    cy_py_payment = _derive_cy_py_payment(current_main, previous_df, int(accounting_period))
     return ProcessFrames(
         allocate_sheets=allocate_sheets,
         result_df=result_df,
         ifrs_summary_df=ifrs_summary_df,
+        cy_py_payment=cy_py_payment,
     )
 
 
