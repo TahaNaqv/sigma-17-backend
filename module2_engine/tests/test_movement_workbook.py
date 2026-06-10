@@ -49,6 +49,27 @@ def test_workbook_contains_opening_closing_and_reporting_date():
     assert "Reconciliation residual" in flat
 
 
+def test_render_works_without_xlsxwriter():
+    """Guard: the disclosure workbook must render with only openpyxl — xlsxwriter is
+    an optional dep absent in production (this exact gap shipped a prod crash once)."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked(name, *a, **k):
+        if name == "xlsxwriter" or name.startswith("xlsxwriter."):
+            raise ModuleNotFoundError("No module named 'xlsxwriter'")
+        return real_import(name, *a, **k)
+
+    res = build_sama_movement(_frames())
+    builtins.__import__ = blocked
+    try:
+        xlsx = render_sama_workbook(res, reporting_date="31/12/2024")
+    finally:
+        builtins.__import__ = real_import
+    assert isinstance(xlsx, bytes) and len(xlsx) > 0
+
+
 def test_long_class_names_are_truncated_safely():
     rows = [{"RESERVINGCLASS": "MOTOR COMPULSORY (NON-AGGREGATORS ONLY)", "UWY": 2023,
              "Gross UPR_prev": 1.0, "Gross UPR_curr": 1.0}]
