@@ -1,0 +1,994 @@
+{
+  "_meta": {
+    "status": "PROPOSED — requires actuarial sign-off",
+    "source": "IFRS Summary (111 cols) + LC frame; {p}=_prev/_curr, {P}=_PY/_CY",
+    "schema": "ifrs17_movement_template.schema.json"
+  },
+  "Gross": {
+    "coverage": {
+      "D": 25,
+      "Δ": 7,
+      "M": 16,
+      "residual": 3,
+      "computed": 15,
+      "unmapped": 1
+    },
+    "lines": {
+      "Insurance contract liabilities/ (assets) as at 01/01": {
+        "tier": "opening",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "UPR": {
+        "tier": "D",
+        "source": "Gross UPR_{p}",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Premium receivable": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "DAC": {
+        "tier": "D",
+        "source": "-DAC_{p}",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Commission Payable": {
+        "tier": "D",
+        "source": "Comm_Payable_{p}",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Premiums received in Advance": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Premium Deficiency Reserve": {
+        "tier": "D",
+        "source": "LC Discounted_{P}",
+        "signs": [
+          "Loss_Component"
+        ]
+      },
+      "O/S Claims": {
+        "tier": "D",
+        "source": "GROSS - Outstanding_{p}",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "IBNR": {
+        "tier": "Δ",
+        "source": "GROSS - Payment_{p} + GROSS - S&S_{p}",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "ULAE": {
+        "tier": "D",
+        "source": "GROSS - ULAE_{p}",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "S&S O/S": {
+        "tier": "D",
+        "source": "GROSS - SS_{p}",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "S&S IBNR": {
+        "tier": "D",
+        "source": "GROSS - S&S_{p}",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Claims payable (payments in pipeline)": {
+        "tier": "D",
+        "source": "Claim_Pay_{p}",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Prudence Margin in Actuarial BE": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Mgmt Margin over Actuarial BE": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Risk_Adjustment"
+        ]
+      },
+      "Discounting impact": {
+        "tier": "D",
+        "source": "GROSS - Discounting Impact_{p}",
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Advance payments to Other parties (hospitals, etc.)": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Provision for Doubtful Debt": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "LIC_excl_RA"
+        ]
+      },
+      "Provision for Profit Commission payable to policyholders": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Other methodology diff": {
+        "tier": "residual",
+        "source": null,
+        "signs": [
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Insurance revenue": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Written premium": {
+        "tier": "D",
+        "source": "GWP",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Change in Unearned Premium Reserves": {
+        "tier": "Δ",
+        "source": "-(Gross UPR_curr - Gross UPR_prev)",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Change in Premium Debtors' Provision (net of write-offs)": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Insurance service expenses": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Incurred claims and other expenses": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Incurred in CY, Paid in CY": {
+        "tier": "Δ",
+        "source": "GROSS - CY Payment",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Incurred in CY, OS at end-CY": {
+        "tier": "D",
+        "source": "GROSS - CY O/S",
+        "signs": [
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Incurred in CY, IBNR at end-CY": {
+        "tier": "D",
+        "source": "GROSS - CY IBNR",
+        "signs": [
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "ULAE for OS & IBNR at end-CY": {
+        "tier": "D",
+        "source": "GROSS - CY ULAE",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Directly Attributable Expenses, excluding Insurance Acquisition cash flows": {
+        "tier": "D",
+        "source": "Directly Attributable Expenses, excluding Insurance Acquisition cash flows",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Insurance Acquisition cash flows on New Contracts & Amortization of insurance acquisition cash flows": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Commission on Written Premium": {
+        "tier": "D",
+        "source": "Commission Expense",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Other Acquistion Cash Flows": {
+        "tier": "D",
+        "source": "Other Acquistion Cash Flows",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Change in DAC": {
+        "tier": "Δ",
+        "source": "-(DAC_curr - DAC_prev)",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Future Service: Losses on onerous contracts and reversals of those losses": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Lossess on new onerous contracts": {
+        "tier": "Δ",
+        "source": "max(LC Discounted_CY - LC Discounted_PY, 0)",
+        "signs": [
+          "Loss_Component"
+        ]
+      },
+      "Reversal of losses on existing onerous contracts": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Reversal/amortization of losses following an assumed patttern": {
+        "tier": "Δ",
+        "source": "min(LC Discounted_CY - LC Discounted_PY, 0)",
+        "signs": [
+          "Loss_Component"
+        ]
+      },
+      "Change in assumptions affecting onerosity": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Loss_Component"
+        ]
+      },
+      "Past Service: Changes to liabilities for incurred claims": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Change in Ultimate for Past Service": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Paid in CY": {
+        "tier": "Δ",
+        "source": "GROSS - PY Payment",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Change in OS in CY": {
+        "tier": "unmapped",
+        "source": null,
+        "signs": [
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Change in IBNR in CY": {
+        "tier": "D",
+        "source": "GROSS - PY IBNR",
+        "signs": [
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Change in ULAE for O/S & IBNR claims": {
+        "tier": "D",
+        "source": "GROSS - PY ULAE",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Investment components": {
+        "tier": "M",
+        "source": null,
+        "signs": []
+      },
+      "Change in Profit Commission": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Insurance service result": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Insurance finance expenses/income": {
+        "tier": "D",
+        "source": "GROSS - Insurance Finance (Income)/Expense + GROSS - Unwinding of Discount",
+        "signs": []
+      },
+      "Insurance finance expenses/income - P&L": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Insurance finance expenses/income - OCI": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Effect of movements in exchange rates": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment"
+        ]
+      },
+      "Other movements": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": []
+      },
+      "Item 1 (Specify)": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Item 2 (Specify)": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Total changes in the statement of profit or loss and OCI": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Cash flows": {
+        "tier": "header",
+        "source": null,
+        "signs": []
+      },
+      "Premium Received": {
+        "tier": "D",
+        "source": "Premium Received",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Claims paid": {
+        "tier": "D",
+        "source": "Claims Paid",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Directly Attributable Expenses paid (excluding insurance acquisition cash flows)": {
+        "tier": "D",
+        "source": "Directly Attributable Expenses, excluding Insurance Acquisition cash flows",
+        "signs": [
+          "LIC_excl_RA"
+        ]
+      },
+      "Insurance Acquisition Cash flows": {
+        "tier": "D",
+        "source": "Insurance Acquisition Cash flows",
+        "signs": [
+          "LRC_excl_LC"
+        ]
+      },
+      "Other Cash Flows": {
+        "tier": "D",
+        "source": "Other Cash Flows",
+        "signs": [
+          "LRC_excl_LC",
+          "LIC_excl_RA"
+        ]
+      },
+      "Total Cash Flows": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "LRC_excl_LC",
+          "Loss_Component",
+          "LIC_excl_RA",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Insurance contract liabilities/(assets) as at 30/06": {
+        "tier": "closing",
+        "source": null,
+        "signs": []
+      }
+    }
+  },
+  "RI": {
+    "coverage": {
+      "D": 20,
+      "Δ": 7,
+      "M": 15,
+      "residual": 3,
+      "computed": 14,
+      "unmapped": 1
+    },
+    "lines": {
+      "Reinsurance contract assets/(liabilities) as at 01/01": {
+        "tier": "opening",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "UPR": {
+        "tier": "D",
+        "source": "RI UPR_{p}",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "Premium payable": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "DAC": {
+        "tier": "D",
+        "source": "RI Commission",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "Commission receivable": {
+        "tier": "D",
+        "source": "RI Rec Provision_{p}",
+        "signs": [
+          "Assets_Remaining_Coverage"
+        ]
+      },
+      "Premiums Paid in Advance": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage"
+        ]
+      },
+      "O/S Claims": {
+        "tier": "D",
+        "source": "RI - Outstanding_{p}",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "IBNR": {
+        "tier": "Δ",
+        "source": "RI - Payment_{p} + RI - S&S_{p}",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "S&S O/S": {
+        "tier": "D",
+        "source": "RI - SS_{p}",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "S&S IBNR": {
+        "tier": "D",
+        "source": "RI - S&S_{p}",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Claims receivable (in pipeline)": {
+        "tier": "D",
+        "source": "RI_Payable_{p}",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Prudence Margin in Actuarial BE": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Mgmt Margin over Actuarial BE": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Risk_Adjustment"
+        ]
+      },
+      "Discounting": {
+        "tier": "D",
+        "source": "RI - Discounting Impact_{p}",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Provision for non-performance risk": {
+        "tier": "D",
+        "source": "RI_Rec_GOP_{p}",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Provision for Profit Commission /Sliding scale commission from Reinsurers": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Other methodology diff": {
+        "tier": "residual",
+        "source": null,
+        "signs": [
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Amounts Allocated to Reinsurance": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Ceded premium": {
+        "tier": "D",
+        "source": "RI GWP",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "Change in RI Unearned Premium Reserves": {
+        "tier": "Δ",
+        "source": "-(RI UPR_curr - RI UPR_prev)",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "Reinsurance (fixed) commission": {
+        "tier": "D",
+        "source": "RI Commission",
+        "signs": [
+          "Assets_Remaining_Coverage"
+        ]
+      },
+      "Change in RI unearned (fixed) commission": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage"
+        ]
+      },
+      "Amounts Recoverable from Reinsurance": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Incurred claims and other expenses": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Incurred in CY, Paid in CY": {
+        "tier": "Δ",
+        "source": "RI - CY Payment",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Incurred in CY, OS at end-CY": {
+        "tier": "D",
+        "source": "RI - CY O/S",
+        "signs": [
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Incurred in CY, IBNR at end-CY": {
+        "tier": "D",
+        "source": "RI - CY IBNR",
+        "signs": [
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Provision for risk of non-performance on new claims": {
+        "tier": "D",
+        "source": "RI_Rec_GOP_{p}",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Future Service: LRC for new onerous contracts and reversal on existing onerous contracts": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Loss Recovery Component for new underlying onerous contracts": {
+        "tier": "Δ",
+        "source": "Loss Recovery Component",
+        "signs": [
+          "Loss_Recovery_Component"
+        ]
+      },
+      "Reversal of Loss Recovery Component for existing underlying  onerous contracts": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Reversal/amortization of LRC following an assumed patttern": {
+        "tier": "Δ",
+        "source": "Loss Recovery Component",
+        "signs": [
+          "Loss_Recovery_Component"
+        ]
+      },
+      "Change in LRC due to changes in assumptions for underlying onerous contracts": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Loss_Recovery_Component"
+        ]
+      },
+      "Past Service: Changes to liabilities for incurred claims": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Change in Ultimate for Past Service": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Paid in CY": {
+        "tier": "Δ",
+        "source": "RI - PY Payment",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Change in OS in CY": {
+        "tier": "unmapped",
+        "source": null,
+        "signs": [
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Change in IBNR in CY": {
+        "tier": "D",
+        "source": "RI - PY IBNR",
+        "signs": [
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Change in Provision for risk of RI non-performance": {
+        "tier": "Δ",
+        "source": "RI_Rec_GOP_curr - RI_Rec_GOP_prev",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Investment components": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Change in Profit Commission/ Sliding Scale commission": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Reinsurance service result": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Reinsurance finance expenses/income": {
+        "tier": "D",
+        "source": "RI - Insurance Finance (Income)/Expense + RI - Unwinding of Discount",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Reinsurance finance expenses/income - P&L": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Reinsurance finance expenses/income - OCI": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Effect of movements in exchange rates": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      },
+      "Other movements": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Item 1 (Specify)": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Amounts_Recoverable_IC",
+          "Total"
+        ]
+      },
+      "Item 2 (Specify)": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "Total changes in the statement of profit or loss and OCI": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Cash flows": {
+        "tier": "header",
+        "source": null,
+        "signs": []
+      },
+      "Premium Paid": {
+        "tier": "D",
+        "source": "RI Premium Paid",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Total"
+        ]
+      },
+      "Claims received": {
+        "tier": "D",
+        "source": "RI Claims received",
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Fixed Commission received": {
+        "tier": "D",
+        "source": "RI Fixed Commission received",
+        "signs": [
+          "Assets_Remaining_Coverage"
+        ]
+      },
+      "Profit Commission/Sliding scale Commission received": {
+        "tier": "M",
+        "source": null,
+        "signs": [
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Other Cash Flows": {
+        "tier": "D",
+        "source": "Other Cash Flows",
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Amounts_Recoverable_IC"
+        ]
+      },
+      "Total Cash Flows": {
+        "tier": "subtotal",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment",
+          "Total"
+        ]
+      },
+      "Reinsurance contract assets/(liabilities) as at 30/06": {
+        "tier": "closing",
+        "source": null,
+        "signs": [
+          "Assets_Remaining_Coverage",
+          "Loss_Recovery_Component",
+          "Amounts_Recoverable_IC",
+          "Risk_Adjustment"
+        ]
+      }
+    }
+  }
+}

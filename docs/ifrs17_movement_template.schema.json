@@ -1,0 +1,1596 @@
+{
+  "name": "IFRS17 Movement Analysis Template",
+  "source_file": "template.xlsx",
+  "reporting": "roll-forward opening(01/01) -> closing(30/06)",
+  "instance_key": [
+    "reserving_class",
+    "uwy"
+  ],
+  "note": "One instance (Gross sheet + RI sheet) per (reserving_class, uwy) pair. Structure identical across all instances; only bound data values differ.",
+  "data_source_binding": {
+    "mechanism": "INDEX/MATCH two-key lookup against external 'Template Info' sheet",
+    "match_keys": [
+      "LoB/class key (col $D)",
+      "period/segment key (col $E)"
+    ],
+    "status": "BROKEN in source file: both match-key cell refs are #REF! (deleted). source_col gives the Template Info column each input pulls from."
+  },
+  "sheets": {
+    "Gross": {
+      "buckets": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment",
+        "Total"
+      ],
+      "rows": [
+        {
+          "row": 6,
+          "label": "Insurance contract liabilities/ (assets) as at 01/01",
+          "buckets": {
+            "LRC_excl_LC": {
+              "formula": "SUM(C7:C25)"
+            },
+            "Loss_Component": {
+              "formula": "SUM(E7:E25)"
+            },
+            "LIC_excl_RA": {
+              "formula": "SUM(G7:G25)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(I7:I25)"
+            },
+            "Total": {
+              "formula": "SUM(J7:J25)"
+            }
+          }
+        },
+        {
+          "row": 7,
+          "label": "UPR",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 8,
+          "label": "Premium receivable",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 9,
+          "label": "DAC",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 10,
+          "label": "Commission Payable",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 11,
+          "label": "Premiums received in Advance",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 12,
+          "label": "Premium Deficiency Reserve",
+          "buckets": {
+            "Loss_Component": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 13,
+          "label": "O/S Claims",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 14,
+          "label": "IBNR",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 15,
+          "label": "ULAE",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 16,
+          "label": "S&S O/S",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 17,
+          "label": "S&S IBNR",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 18,
+          "label": "Claims payable (payments in pipeline)",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 19,
+          "label": "Prudence Margin in Actuarial BE",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 20,
+          "label": "Mgmt Margin over Actuarial BE",
+          "buckets": {
+            "Risk_Adjustment": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 21,
+          "label": "Discounting impact",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-"
+            },
+            "Loss_Component": {
+              "sign": "-"
+            },
+            "LIC_excl_RA": {
+              "sign": "-"
+            },
+            "Risk_Adjustment": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 22,
+          "label": "Advance payments to Other parties (hospitals, etc.)",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 23,
+          "label": "Provision for Doubtful Debt",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            },
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 24,
+          "label": "Provision for Profit Commission payable to policyholders",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 25,
+          "label": "Other methodology diff",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            },
+            "Loss_Component": {
+              "sign": "+/-"
+            },
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 26,
+          "label": "Insurance revenue",
+          "buckets": {
+            "LRC_excl_LC": {
+              "formula": "SUM(C27:C30)"
+            },
+            "Loss_Component": {
+              "formula": "SUM(E27:E30)"
+            },
+            "LIC_excl_RA": {
+              "formula": "SUM(G27:G30)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(I27:I30)"
+            },
+            "Total": {
+              "formula": "SUM(J27:J30)"
+            }
+          }
+        },
+        {
+          "row": 27,
+          "label": "Written premium",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 28,
+          "label": "Change in Unearned Premium Reserves",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-/+"
+            }
+          }
+        },
+        {
+          "row": 29,
+          "label": "Change in Premium Debtors' Provision (net of write-offs)",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-/+"
+            }
+          }
+        },
+        {
+          "row": 30,
+          "label": "Other methodology diff",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-/+"
+            }
+          }
+        },
+        {
+          "row": 31,
+          "label": "Insurance service expenses",
+          "buckets": {
+            "LRC_excl_LC": {
+              "formula": "SUM(C32+C42+C47+C53+C54)"
+            },
+            "Loss_Component": {
+              "formula": "SUM(E32+E42+E47+E53+E54)"
+            },
+            "LIC_excl_RA": {
+              "formula": "SUM(G32+G42+G47+G53+G54)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(I32+I42+I47+I53+I54)"
+            },
+            "Total": {
+              "formula": "SUM(B31:I31)"
+            }
+          }
+        },
+        {
+          "row": 32,
+          "label": "Incurred claims and other expenses"
+        },
+        {
+          "row": 33,
+          "label": "Incurred in CY, Paid in CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 34,
+          "label": "Incurred in CY, OS at end-CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            },
+            "Risk_Adjustment": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 35,
+          "label": "Incurred in CY, IBNR at end-CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            },
+            "Risk_Adjustment": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 36,
+          "label": "ULAE for OS & IBNR at end-CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 37,
+          "label": "Directly Attributable Expenses, excluding Insurance Acquisition cash flows",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 38,
+          "label": "Insurance Acquisition cash flows on New Contracts & Amortization of insurance acquisition cash flows"
+        },
+        {
+          "row": 39,
+          "label": "Commission on Written Premium",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 40,
+          "label": "Other Acquistion Cash Flows",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 41,
+          "label": "Change in DAC",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 42,
+          "label": "Future Service: Losses on onerous contracts and reversals of those losses"
+        },
+        {
+          "row": 43,
+          "label": "Lossess on new onerous contracts",
+          "buckets": {
+            "Loss_Component": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 44,
+          "label": "Reversal of losses on existing onerous contracts"
+        },
+        {
+          "row": 45,
+          "label": "Reversal/amortization of losses following an assumed patttern",
+          "buckets": {
+            "Loss_Component": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 46,
+          "label": "Change in assumptions affecting onerosity",
+          "buckets": {
+            "Loss_Component": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 47,
+          "label": "Past Service: Changes to liabilities for incurred claims"
+        },
+        {
+          "row": 48,
+          "label": "Change in Ultimate for Past Service"
+        },
+        {
+          "row": 49,
+          "label": "Paid in CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 50,
+          "label": "Change in OS in CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 51,
+          "label": "Change in IBNR in CY",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 52,
+          "label": "Change in ULAE for O/S & IBNR claims",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 53,
+          "label": "Other methodology diff",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 54,
+          "label": "Investment components"
+        },
+        {
+          "row": 55,
+          "label": "Change in Profit Commission",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 56,
+          "label": "Insurance service result",
+          "buckets": {
+            "LRC_excl_LC": {
+              "formula": "C26-C31"
+            },
+            "Loss_Component": {
+              "formula": "E26-E31"
+            },
+            "LIC_excl_RA": {
+              "formula": "G26-G31"
+            },
+            "Risk_Adjustment": {
+              "formula": "I26-I31"
+            },
+            "Total": {
+              "formula": "SUM(B56:I56)"
+            }
+          }
+        },
+        {
+          "row": 57,
+          "label": "Insurance finance expenses/income"
+        },
+        {
+          "row": 58,
+          "label": "Insurance finance expenses/income - P&L",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            },
+            "Loss_Component": {
+              "sign": "+/-"
+            },
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 59,
+          "label": "Insurance finance expenses/income - OCI",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            },
+            "Loss_Component": {
+              "sign": "+/-"
+            },
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 60,
+          "label": "Effect of movements in exchange rates",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            },
+            "Loss_Component": {
+              "sign": "+/-"
+            },
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 61,
+          "label": "Other movements"
+        },
+        {
+          "row": 62,
+          "label": "Item 1 (Specify)",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 63,
+          "label": "Item 2 (Specify)",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 64,
+          "label": "Total changes in the statement of profit or loss and OCI",
+          "buckets": {
+            "LRC_excl_LC": {
+              "formula": "C61+C60+C57+C56"
+            },
+            "Loss_Component": {
+              "formula": "E61+E60+E57+E56"
+            },
+            "LIC_excl_RA": {
+              "formula": "G61+G60+G57+G56"
+            },
+            "Risk_Adjustment": {
+              "formula": "I61+I60+I57+I56"
+            },
+            "Total": {
+              "formula": "SUM(B64:I64)"
+            }
+          }
+        },
+        {
+          "row": 65,
+          "label": "Cash flows"
+        },
+        {
+          "row": 66,
+          "label": "Premium Received",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 67,
+          "label": "Claims paid",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 68,
+          "label": "Directly Attributable Expenses paid (excluding insurance acquisition cash flows)",
+          "buckets": {
+            "LIC_excl_RA": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 69,
+          "label": "Insurance Acquisition Cash flows",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 70,
+          "label": "Other Cash Flows",
+          "buckets": {
+            "LRC_excl_LC": {
+              "sign": "+/-"
+            },
+            "LIC_excl_RA": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 71,
+          "label": "Total Cash Flows",
+          "buckets": {
+            "LRC_excl_LC": {
+              "formula": "SUM(C66:C70)"
+            },
+            "Loss_Component": {
+              "formula": "SUM(E66:E70)"
+            },
+            "LIC_excl_RA": {
+              "formula": "SUM(G66:G70)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(I66:I70)"
+            },
+            "Total": {
+              "formula": "SUM(B71:I71)"
+            }
+          }
+        },
+        {
+          "row": 72,
+          "label": "Insurance contract liabilities/(assets) as at 30/06"
+        }
+      ]
+    },
+    "RI": {
+      "buckets": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment",
+        "Total"
+      ],
+      "rows": [
+        {
+          "row": 4,
+          "label": "Reinsurance contract assets/(liabilities) as at 01/01",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D5:D20)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F5:F20)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H5:H20)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J5:J20)"
+            },
+            "Total": {
+              "formula": "SUM(K5:K20)"
+            }
+          }
+        },
+        {
+          "row": 5,
+          "label": "UPR",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DH:$DH,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DH"
+            },
+            "Total": {
+              "formula": "SUM(C5:J5)"
+            }
+          }
+        },
+        {
+          "row": 6,
+          "label": "Premium payable",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DI:$DI,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DI"
+            },
+            "Total": {
+              "formula": "SUM(C6:J6)"
+            }
+          }
+        },
+        {
+          "row": 7,
+          "label": "DAC",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DJ:$DJ,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DJ"
+            },
+            "Total": {
+              "formula": "SUM(C7:J7)"
+            }
+          }
+        },
+        {
+          "row": 8,
+          "label": "Commission receivable",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 9,
+          "label": "Premiums Paid in Advance",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 10,
+          "label": "O/S Claims",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DM:$DM,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DM"
+            }
+          }
+        },
+        {
+          "row": 11,
+          "label": "IBNR",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DO:$DO,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DO"
+            }
+          }
+        },
+        {
+          "row": 12,
+          "label": "S&S O/S",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DN:$DN,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DN"
+            }
+          }
+        },
+        {
+          "row": 13,
+          "label": "S&S IBNR",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DP:$DP,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DP"
+            }
+          }
+        },
+        {
+          "row": 14,
+          "label": "Claims receivable (in pipeline)",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DL:$DL,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DL"
+            }
+          }
+        },
+        {
+          "row": 15,
+          "label": "Prudence Margin in Actuarial BE",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+"
+            },
+            "Total": {
+              "formula": "SUM(C15:J15)"
+            }
+          }
+        },
+        {
+          "row": 16,
+          "label": "Mgmt Margin over Actuarial BE",
+          "buckets": {
+            "Risk_Adjustment": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 17,
+          "label": "Discounting",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "-"
+            },
+            "Loss_Recovery_Component": {
+              "sign": "-"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DQ:$DQ,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DQ"
+            },
+            "Risk_Adjustment": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 18,
+          "label": "Provision for non-performance risk",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "-"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DR:$DR,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DR"
+            }
+          }
+        },
+        {
+          "row": 19,
+          "label": "Provision for Profit Commission /Sliding scale commission from Reinsurers",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 20,
+          "label": "Other methodology diff",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            },
+            "Loss_Recovery_Component": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DX:$DX,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DX"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DV:$DV,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DV"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$DW:$DW,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "DW"
+            }
+          }
+        },
+        {
+          "row": 21,
+          "label": "Amounts Allocated to Reinsurance",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D22:D26)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F22:F26)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H22:H26)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J22:J26)"
+            },
+            "Total": {
+              "formula": "SUM(K22:K26)"
+            }
+          }
+        },
+        {
+          "row": 22,
+          "label": "Ceded premium",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$H:$H,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "H"
+            },
+            "Total": {
+              "formula": "SUM(C22:J22)"
+            }
+          }
+        },
+        {
+          "row": 23,
+          "label": "Change in RI Unearned Premium Reserves",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$AA:$AA,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "AA"
+            },
+            "Total": {
+              "formula": "SUM(C23:J23)"
+            }
+          }
+        },
+        {
+          "row": 24,
+          "label": "Reinsurance (fixed) commission",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$I:$I,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "I"
+            }
+          }
+        },
+        {
+          "row": 25,
+          "label": "Change in RI unearned (fixed) commission",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$AB:$AB,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "AB"
+            }
+          }
+        },
+        {
+          "row": 26,
+          "label": "Other methodology diff",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 27,
+          "label": "Amounts Recoverable from Reinsurance",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D28+D33+D38+D44+D45)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F28+F33+F38+F44+F45)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H28+H33+H38+H44+H45)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J28+J33+J38+J44+J45)"
+            }
+          }
+        },
+        {
+          "row": 28,
+          "label": "Incurred claims and other expenses",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D29:D32)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F29:F32)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H29:H32)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J29:J32)"
+            }
+          }
+        },
+        {
+          "row": 29,
+          "label": "Incurred in CY, Paid in CY",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$N:$N,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "N"
+            }
+          }
+        },
+        {
+          "row": 30,
+          "label": "Incurred in CY, OS at end-CY",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$R:$R,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "R"
+            },
+            "Risk_Adjustment": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BD:$BD,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BD"
+            }
+          }
+        },
+        {
+          "row": 31,
+          "label": "Incurred in CY, IBNR at end-CY",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$AX:$AX,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "AX"
+            },
+            "Risk_Adjustment": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BE:$BE,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BE"
+            }
+          }
+        },
+        {
+          "row": 32,
+          "label": "Provision for risk of non-performance on new claims",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "-"
+            }
+          }
+        },
+        {
+          "row": 33,
+          "label": "Future Service: LRC for new onerous contracts and reversal on existing onerous contracts",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D34:D35)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F34:F35)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H34:H35)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J34:J35)"
+            }
+          }
+        },
+        {
+          "row": 34,
+          "label": "Loss Recovery Component for new underlying onerous contracts",
+          "buckets": {
+            "Loss_Recovery_Component": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BI:$BI,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BI"
+            }
+          }
+        },
+        {
+          "row": 35,
+          "label": "Reversal of Loss Recovery Component for existing underlying  onerous contracts",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D36:D37)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F36:F37)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H36:H37)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J36:J37)"
+            }
+          }
+        },
+        {
+          "row": 36,
+          "label": "Reversal/amortization of LRC following an assumed patttern",
+          "buckets": {
+            "Loss_Recovery_Component": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BJ:$BJ,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BJ"
+            }
+          }
+        },
+        {
+          "row": 37,
+          "label": "Change in LRC due to changes in assumptions for underlying onerous contracts",
+          "buckets": {
+            "Loss_Recovery_Component": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BK:$BK,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BK"
+            }
+          }
+        },
+        {
+          "row": 38,
+          "label": "Past Service: Changes to liabilities for incurred claims",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "D39+D43"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "F39+F43"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "H39+H43"
+            },
+            "Risk_Adjustment": {
+              "formula": "J39+J43"
+            },
+            "Total": {
+              "formula": "SUM(C38:J38)"
+            }
+          }
+        },
+        {
+          "row": 39,
+          "label": "Change in Ultimate for Past Service",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D40:D42)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F40:F42)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H40:H42)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J40:J42)"
+            }
+          }
+        },
+        {
+          "row": 40,
+          "label": "Paid in CY",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$M:$M,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "M"
+            }
+          }
+        },
+        {
+          "row": 41,
+          "label": "Change in OS in CY",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$AC:$AC,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "AC"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BF:$BF,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BF"
+            }
+          }
+        },
+        {
+          "row": 42,
+          "label": "Change in IBNR in CY",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$AZ:$AZ,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "AZ"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BG:$BG,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BG"
+            }
+          }
+        },
+        {
+          "row": 43,
+          "label": "Change in Provision for risk of RI non-performance",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$AD:$AD,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "AD"
+            }
+          }
+        },
+        {
+          "row": 44,
+          "label": "Other methodology diff",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 45,
+          "label": "Investment components",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D46)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F46)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H46)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J46)"
+            }
+          }
+        },
+        {
+          "row": 46,
+          "label": "Change in Profit Commission/ Sliding Scale commission",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 47,
+          "label": "Reinsurance service result",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "D27-D21"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "F27-F21"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "H27-H21"
+            },
+            "Risk_Adjustment": {
+              "formula": "J27-J21"
+            },
+            "Total": {
+              "formula": "SUM(C47:J47)"
+            }
+          }
+        },
+        {
+          "row": 48,
+          "label": "Reinsurance finance expenses/income",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D49:D50)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F49:F50)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H49:H50)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J49:J50)"
+            }
+          }
+        },
+        {
+          "row": 49,
+          "label": "Reinsurance finance expenses/income - P&L",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            },
+            "Loss_Recovery_Component": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BL:$BL,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BL"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$BB:$BB,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "BB"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 50,
+          "label": "Reinsurance finance expenses/income - OCI",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            },
+            "Loss_Recovery_Component": {
+              "sign": "+/-"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 51,
+          "label": "Effect of movements in exchange rates",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            },
+            "Loss_Recovery_Component": {
+              "sign": "+/-"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-"
+            },
+            "Risk_Adjustment": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 52,
+          "label": "Other movements",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D53:D54)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F53:F54)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H53:H54)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J53:J54)"
+            },
+            "Total": {
+              "formula": "SUM(C52:J52)"
+            }
+          }
+        },
+        {
+          "row": 53,
+          "label": "Item 1 (Specify)",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "-IFERROR(INDEX('[1]Template Info'!$EZ:$EZ,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "EZ"
+            },
+            "Total": {
+              "formula": "SUM(C53:J53)"
+            }
+          }
+        },
+        {
+          "row": 54,
+          "label": "Item 2 (Specify)",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-"
+            },
+            "Total": {
+              "formula": "SUM(C54:J54)"
+            }
+          }
+        },
+        {
+          "row": 55,
+          "label": "Total changes in the statement of profit or loss and OCI",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "D52+D51+D48+D47"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "F52+F51+F48+F47"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "H52+H51+H48+H47"
+            },
+            "Risk_Adjustment": {
+              "formula": "J52+J51+J48+J47"
+            },
+            "Total": {
+              "formula": "SUM(C55:J55)"
+            }
+          }
+        },
+        {
+          "row": 56,
+          "label": "Cash flows"
+        },
+        {
+          "row": 57,
+          "label": "Premium Paid",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$EV:$EV,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "EV"
+            },
+            "Total": {
+              "formula": "SUM(C57:J57)"
+            }
+          }
+        },
+        {
+          "row": 58,
+          "label": "Claims received",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$EW:$EW,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "EW"
+            }
+          }
+        },
+        {
+          "row": 59,
+          "label": "Fixed Commission received",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$EX:$EX,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "EX"
+            }
+          }
+        },
+        {
+          "row": 60,
+          "label": "Profit Commission/Sliding scale Commission received",
+          "buckets": {
+            "Amounts_Recoverable_IC": {
+              "sign": "+"
+            }
+          }
+        },
+        {
+          "row": 61,
+          "label": "Other Cash Flows",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "sign": "+/-",
+              "formula": "IFERROR(INDEX('[1]Template Info'!$EY:$EY,MATCH(1,(#REF!='[1]Template Info'!$D:$D)*(#REF!='[1]Template Info'!$E:$E),0)),0)",
+              "source_col": "EY"
+            },
+            "Amounts_Recoverable_IC": {
+              "sign": "+/-"
+            }
+          }
+        },
+        {
+          "row": 62,
+          "label": "Total Cash Flows",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "SUM(D57:D61)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "SUM(F57:F61)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "SUM(H57:H61)"
+            },
+            "Risk_Adjustment": {
+              "formula": "SUM(J57:J61)"
+            },
+            "Total": {
+              "formula": "SUM(K57:K61)"
+            }
+          }
+        },
+        {
+          "row": 63,
+          "label": "Reinsurance contract assets/(liabilities) as at 30/06",
+          "buckets": {
+            "Assets_Remaining_Coverage": {
+              "formula": "D4+(D55-D62)"
+            },
+            "Loss_Recovery_Component": {
+              "formula": "F4+(F55-F62)"
+            },
+            "Amounts_Recoverable_IC": {
+              "formula": "H4+(H55-H62)"
+            },
+            "Risk_Adjustment": {
+              "formula": "J4+(J55-J62)"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
