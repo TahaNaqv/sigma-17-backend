@@ -103,6 +103,8 @@ class OutputSheetPageResponseSerializer(serializers.Serializer):
     page_size = serializers.IntegerField(min_value=1)
     total_rows = serializers.IntegerField(min_value=0)
     columns = serializers.ListField(child=serializers.CharField())
+    # Per-column display hint parallel to `columns`: "ratio" | "factor" | "number".
+    column_kinds = serializers.ListField(child=serializers.CharField())
     rows = serializers.ListField(child=serializers.ListField())
 
 

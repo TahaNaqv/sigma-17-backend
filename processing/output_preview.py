@@ -9,6 +9,8 @@ from zipfile import ZipFile
 
 from openpyxl import load_workbook
 
+from .output_column_kinds import classify_columns
+
 
 @dataclass(frozen=True)
 class OutputFileItem:
@@ -158,6 +160,7 @@ def read_sheet_page(
                 "page_size": page_size,
                 "total_rows": 0,
                 "columns": [],
+                "column_kinds": [],
                 "rows": [],
             }
 
@@ -171,10 +174,14 @@ def read_sheet_page(
                 "page_size": page_size,
                 "total_rows": 0,
                 "columns": [],
+                "column_kinds": [],
                 "rows": [],
             }
 
         columns = [str(v).strip() if v is not None and str(v).strip() else f"Column {i + 1}" for i, v in enumerate(header_row)]
+        # Per-column display hint (ratio -> %, factor -> 3dp, number -> default)
+        # so the generic preview grid can format actuarial ratios correctly.
+        column_kinds = classify_columns(sheet_key, columns)
         total_rows = max(0, max_row - 1)
 
         start_data_row_idx = (page - 1) * page_size + 1  # 1-indexed over data rows
@@ -187,6 +194,7 @@ def read_sheet_page(
                 "page_size": page_size,
                 "total_rows": total_rows,
                 "columns": columns,
+                "column_kinds": column_kinds,
                 "rows": [],
             }
 
@@ -212,6 +220,7 @@ def read_sheet_page(
             "page_size": page_size,
             "total_rows": total_rows,
             "columns": columns,
+            "column_kinds": column_kinds,
             "rows": rows,
         }
     finally:
