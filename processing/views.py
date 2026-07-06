@@ -1,9 +1,10 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.http import FileResponse, Http404
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -117,6 +118,101 @@ def _scope_jobs_qs(request, job_types):
     if org is None:
         raise PermissionDenied("An active organization context is required.")
     return qs.filter(organization=org)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard stats
+# ---------------------------------------------------------------------------
+
+STATS_PERIODS = ("month", "week", "all")
+
+
+def _stats_period_start(period: str):
+    """Return the inclusive lower bound (aware datetime) for a stats period,
+    or None for 'all' (no lower bound)."""
+    now = timezone.now()
+    if period == "week":
+        return now - timedelta(days=7)
+    if period == "all":
+        return None
+    # default: calendar month to date
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _count_input_files(input_meta) -> int:
+    """Number of uploaded input files recorded in a job's input_meta.
+
+    Mirrors the frontend countJobInputFiles(): input_meta["files"] is a dict of
+    {field_name: [{...}, ...] | {...}}; list entries count per element, a bare
+    object counts as one.
+    """
+    if not isinstance(input_meta, dict):
+        return 0
+    files = input_meta.get("files")
+    if not isinstance(files, dict):
+        return 0
+    n = 0
+    for v in files.values():
+        if isinstance(v, list):
+            n += len(v)
+        elif isinstance(v, dict):
+            n += 1
+    return n
+
+
+def _compute_processing_stats(period_qs) -> dict:
+    """Aggregate headline stats over an already-scoped, period-filtered queryset.
+
+    Iterates in Python (over a lightweight .values() projection) so file counts
+    stored inside the input_meta JSON and duration math stay DB-portable
+    (sqlite in dev, postgres in prod).
+    """
+    total_jobs = 0
+    files_processed = 0
+    success = 0
+    failed = 0
+    durations = []
+    rows = period_qs.values("status", "started_at", "completed_at", "input_meta")
+    for row in rows.iterator():
+        total_jobs += 1
+        files_processed += _count_input_files(row["input_meta"])
+        st = row["status"]
+        if st == Module1Job.Status.SUCCESS:
+            success += 1
+        elif st == Module1Job.Status.FAILED:
+            failed += 1
+        started, completed = row["started_at"], row["completed_at"]
+        if started and completed:
+            durations.append((completed - started).total_seconds())
+    completed_jobs = success + failed
+    return {
+        "total_jobs": total_jobs,
+        "files_processed": files_processed,
+        # fraction 0..1 over terminal (success|failed) jobs; null when none finished
+        "success_rate": (success / completed_jobs) if completed_jobs else None,
+        # seconds; null when no job has both timestamps
+        "avg_duration_seconds": (sum(durations) / len(durations)) if durations else None,
+    }
+
+
+def _last_runs_by_workflow(scoped_qs, job_types, limit: int = 4) -> list:
+    """Most recent run per job_type (any status), newest first.
+
+    One indexed query per type (m1job_org_type_status_idx covers this); a handful
+    of types, so the query count is bounded and small.
+    """
+    latest = []
+    for jt in job_types:
+        row = (
+            scoped_qs.filter(job_type=jt)
+            .order_by("-created_at")
+            .values("job_type", "status", "created_at", "completed_at")
+            .first()
+        )
+        if row is not None:
+            latest.append(row)
+    latest.sort(key=lambda r: r["created_at"], reverse=True)
+    return latest[:limit]
 
 
 def _parse_dd_mm_yyyy(label: str, value: str) -> str:
@@ -346,6 +442,32 @@ class ProcessingJobListView(generics.ListAPIView):
 
     def get_queryset(self):
         return _scope_jobs_qs(self.request, ALL_JOB_TYPES).select_related("source_job")
+
+
+class ProcessingStatsView(APIView):
+    """Headline dashboard stats over all processing jobs in the active org.
+
+    GET /api/processing/stats/?period=month|week|all  (default month).
+    Org-scoped exactly like the job list views. Returns live aggregates plus the
+    latest run per workflow — never fabricated values.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["runhistory.view"])]
+
+    def get(self, request):
+        period = (request.query_params.get("period") or "month").lower()
+        if period not in STATS_PERIODS:
+            period = "month"
+        scoped = _scope_jobs_qs(request, ALL_JOB_TYPES)
+        period_qs = scoped
+        start = _stats_period_start(period)
+        if start is not None:
+            period_qs = scoped.filter(created_at__gte=start)
+        stats = _compute_processing_stats(period_qs)
+        stats["period"] = period
+        stats["last_runs"] = _last_runs_by_workflow(scoped, ALL_JOB_TYPES)
+        return Response(stats)
 
 
 class Module1JobDetailView(generics.RetrieveAPIView):

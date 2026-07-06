@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path("processing/jobs/", views.ProcessingJobListView.as_view()),
+    path("processing/stats/", views.ProcessingStatsView.as_view()),
     path("processing/source-candidates/", views.SourceCandidatesView.as_view()),
     path(
         "module1/combined-summary/uw-preview/",
