@@ -126,3 +126,58 @@ class Module1Job(models.Model):
         self.output_artifacts = []
         self.save(update_fields=["output_zip", "output_purged_at", "output_artifacts"])
         return deleted
+
+
+class JobDraft(models.Model):
+    """Per-(user, organization, wizard) saved copy of an in-progress wizard's
+    input state, enabling cross-device / cross-session resume.
+
+    The frontend autosaves the serialisable slice of a wizard's Zustand store
+    here (debounced). `state` is opaque JSON owned by the client — the backend
+    stores and returns it verbatim, so no server-side schema coupling to the
+    wizard shape. One draft per wizard per user per org (upsert on save).
+
+    Uploaded file *bytes* are never stored here (they live only in the origin
+    browser); `state` carries lightweight file references that simply don't
+    resolve on another device — everything else restores.
+    """
+
+    class Key(models.TextChoices):
+        SUMMARY = "summary", "Reserve Summary"
+        UPDATE_RESERVE = "update_reserve", "Update Reserves"
+        IBNR_ALLOCATION = "ibnr_allocation", "Cash Flow Allocation"
+        MOVEMENT = "movement", "Movement Analysis"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="job_drafts",
+    )
+    organization = models.ForeignKey(
+        "tenants.Organization",
+        on_delete=models.CASCADE,
+        related_name="job_drafts",
+        db_index=True,
+    )
+    key = models.CharField(max_length=32, choices=Key.choices)
+    state = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "organization", "key"],
+                name="uniq_job_draft_user_org_key",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "user", "key"],
+                name="jobdraft_scope_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"JobDraft {self.key} u={self.user_id} org={self.organization_id}"

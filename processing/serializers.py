@@ -1,6 +1,37 @@
+import json
+
 from rest_framework import serializers
 
-from .models import Module1Job
+from .models import JobDraft, Module1Job
+
+# Hard cap on a persisted draft's JSON size (defensive; a real wizard draft is
+# a few KB). Prevents a client from parking large blobs in the drafts table.
+MAX_DRAFT_STATE_BYTES = 256 * 1024
+
+
+class JobDraftSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = JobDraft
+        fields = ("key", "state", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
+
+    def validate_key(self, value):
+        if value not in JobDraft.Key.values:
+            raise serializers.ValidationError("Unknown wizard key.")
+        return value
+
+    def validate_state(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("state must be a JSON object.")
+        try:
+            size = len(json.dumps(value).encode("utf-8"))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError("state is not JSON-serialisable.")
+        if size > MAX_DRAFT_STATE_BYTES:
+            raise serializers.ValidationError(
+                f"Draft state too large ({size} bytes; max {MAX_DRAFT_STATE_BYTES})."
+            )
+        return value
 
 
 class _JobSourceSerializer(serializers.Serializer):

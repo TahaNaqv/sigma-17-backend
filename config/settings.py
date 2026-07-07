@@ -197,6 +197,7 @@ CELERY_TASK_ROUTES = {
     'processing.tasks.run_module2_movement_task': {'queue': 'compute'},
     'processing.tasks.purge_expired_outputs_task': {'queue': 'retention'},
     'processing.tasks.cascade_purge_task': {'queue': 'retention'},
+    'processing.tasks.reap_stuck_jobs_task': {'queue': 'retention'},
 }
 
 # Module 1 job uploads (count / size guardrails)

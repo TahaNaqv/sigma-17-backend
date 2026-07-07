@@ -19,6 +19,7 @@ from processing.services.retention import (
     cascade_purge as _cascade_purge,
     purge_expired_outputs as _purge_expired_outputs,
 )
+from processing.services.watchdog import reap_stuck_jobs as _reap_stuck_jobs
 from processing.services.reserve_workbook import (
     write_workbooks_with_overrides,
 )
@@ -546,6 +547,18 @@ def purge_expired_outputs_task(self, batch_size: int = 500) -> dict:
     """Beat-scheduled daily. Idempotent. Bounded by batch_size per call."""
     result = _purge_expired_outputs(batch_size=batch_size)
     logger.info("retention.sweep_complete", extra=result)
+    return result
+
+
+@shared_task(bind=True, ignore_result=True)
+def reap_stuck_jobs_task(self, batch_size: int = 500) -> dict:
+    """Beat-scheduled watchdog. Fails jobs stuck in running/pending past the
+    Celery hard time limit (+ margin). Idempotent; bounded by batch_size."""
+    result = _reap_stuck_jobs(batch_size=batch_size)
+    if result["reaped_running"] or result["reaped_pending"]:
+        logger.warning("watchdog.reap_complete", extra=result)
+    else:
+        logger.info("watchdog.reap_complete", extra=result)
     return result
 
 

@@ -18,4 +18,11 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=15),
         "kwargs": {"batch_size": 500},
     },
+    # Stuck-job watchdog. Runs every 15 minutes so a job whose worker died is
+    # failed promptly instead of leaving the UI polling it forever.
+    "reap-stuck-jobs": {
+        "task": "processing.tasks.reap_stuck_jobs_task",
+        "schedule": crontab(minute="*/15"),
+        "kwargs": {"batch_size": 500},
+    },
 }

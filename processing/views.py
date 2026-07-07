@@ -22,7 +22,7 @@ from datasets.models import Dataset
 from datasets.services.snapshots import create_snapshot
 from tenants.permissions import get_request_org
 
-from .models import Module1Job
+from .models import JobDraft, Module1Job
 from .output_preview import (
     list_preview_files,
     list_workbook_sheets,
@@ -31,6 +31,7 @@ from .output_preview import (
 )
 from .pagination import Module1JobPagination
 from .serializers import (
+    JobDraftSerializer,
     Module1JobSerializer,
     Module2ProcessRequestSerializer,
     Module2UlrRowSerializer,
@@ -468,6 +469,60 @@ class ProcessingStatsView(APIView):
         stats["period"] = period
         stats["last_runs"] = _last_runs_by_workflow(scoped, ALL_JOB_TYPES)
         return Response(stats)
+
+
+class JobDraftView(APIView):
+    """Cross-device persistence for a wizard's in-progress input state.
+
+    GET    /api/processing/job-drafts/?key=<key>    -> {key,state,...} or 204
+    PUT    /api/processing/job-drafts/  {key,state}  -> upsert (200)
+    DELETE /api/processing/job-drafts/?key=<key>     -> 204
+
+    Scoped to the caller's (active organization, user) — one draft per wizard.
+    Any authenticated user in an org context manages only their own drafts.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _org(self, request):
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("An active organization context is required.")
+        return org
+
+    def get(self, request):
+        key = request.query_params.get("key")
+        if not key:
+            raise ValidationError("key query param is required.")
+        org = self._org(request)
+        draft = JobDraft.objects.filter(
+            user=request.user, organization=org, key=key
+        ).first()
+        if draft is None:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(JobDraftSerializer(draft).data)
+
+    def put(self, request):
+        serializer = JobDraftSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        org = self._org(request)
+        draft, _created = JobDraft.objects.update_or_create(
+            user=request.user,
+            organization=org,
+            key=serializer.validated_data["key"],
+            defaults={"state": serializer.validated_data["state"]},
+        )
+        return Response(JobDraftSerializer(draft).data)
+
+    def delete(self, request):
+        key = request.query_params.get("key")
+        if not key:
+            raise ValidationError("key query param is required.")
+        org = self._org(request)
+        JobDraft.objects.filter(
+            user=request.user, organization=org, key=key
+        ).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class Module1JobDetailView(generics.RetrieveAPIView):
