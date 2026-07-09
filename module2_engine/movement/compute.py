@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .mapping import _load as _load_mapping
+from .mapping import TIER_OVERRIDE, _load as _load_mapping
 from .schema import SCHEMA, Sheet
 
 # ── safe expression resolver ────────────────────────────────────────────────
@@ -152,8 +152,7 @@ def _resolve(expr: str, row: dict, columns: set[str], *, p: str, big_p: str, mis
 
 # ── movement computation ────────────────────────────────────────────────────
 
-_METHODOLOGY_DIFF_IDS = {"other_methodology_diff"}  # residual sink (per sheet)
-_OPENING_SUFFIX_RE = re.compile(r"\{p\}|\{P\}")
+_OVERRIDE_COL = "__ovr__{key}"  # override values are merged into the row frame under this key
 
 
 @dataclass
@@ -180,16 +179,9 @@ class MovementResult:
     missing_columns: set[str] = field(default_factory=set)
 
 
-def _line_bucket(line) -> str | None:
-    """The single measurement bucket an input line contributes to (its sign key,
-    excluding Total). Multi-bucket lines (methodology diff) return None."""
-    keys = [b for b in line.signs if b != "Total"]
-    return keys[0] if len(keys) == 1 else None
-
-
 def _classify(sheet: Sheet):
-    """Partition input lines into opening build-up / P&L / cash-flow, by the
-    'Cash flows' section header row and the presence of a {p}/{P} source."""
+    """Partition input lines into opening build-up / P&L / cash-flow, by the presence of
+    a {p}/{P}-templated bucket source (build-up) and the 'Cash flows' section boundary."""
     cash_row = next((ln.row for ln in sheet.lines if ln.kind == "section"
                      and "cash flow" in ln.label.lower()), 10**9)
     mapping = _load_mapping()
@@ -198,8 +190,7 @@ def _classify(sheet: Sheet):
         if ln.kind != "input":
             continue
         m = mapping.get((sheet.name, ln.id))
-        src = m.source if m else None
-        if src and _OPENING_SUFFIX_RE.search(src):
+        if m and m.has_template:
             buildup.append(ln)
         elif ln.row > cash_row:
             cashflow.append(ln)
@@ -208,13 +199,25 @@ def _classify(sheet: Sheet):
     return buildup, pnl, cashflow
 
 
-def build_sama_movement(frames, *, classes=None, uwys=None) -> MovementResult:
-    """Project ProcessFrames → per-(class, UWY) Gross + RI movement tables."""
+def build_sama_movement(frames, *, classes=None, uwys=None, overrides=None) -> MovementResult:
+    """Project ProcessFrames → per-(class, UWY) Gross + RI movement tables.
+
+    ``overrides`` (optional) is a class×cohort frame of manual override inputs (the
+    MovementOverride dataset): columns [RESERVINGCLASS, UWY, <override_key>...]. Each
+    override_key column is merged in under ``__ovr__<key>`` so the mapping's tier-O
+    lines resolve from it instead of defaulting to 0.
+    """
     ifrs = frames.ifrs_summary_df.copy()
     lc = frames.allocate_sheets.get("LC")
     if lc is not None:
         ifrs = ifrs.merge(lc, on=["RESERVINGCLASS", "UWY"], how="left", suffixes=("", "_lc"))
     ifrs["UWY"] = ifrs["UWY"].astype(int)
+    if overrides is not None and len(overrides):
+        ovr = overrides.copy()
+        ovr["UWY"] = ovr["UWY"].astype(int)
+        ovr = ovr.rename(columns={c: _OVERRIDE_COL.format(key=c)
+                                  for c in ovr.columns if c not in ("RESERVINGCLASS", "UWY")})
+        ifrs = ifrs.merge(ovr, on=["RESERVINGCLASS", "UWY"], how="left", suffixes=("", "_ovr"))
     # Additive CY/PY Paid split (movement-only; absent on legacy/synthetic frames).
     cy_py = getattr(frames, "cy_py_payment", None)
     if cy_py is not None:
@@ -247,41 +250,48 @@ def _build_sheet(sheet: Sheet, row: dict, columns: set[str], mapping, result: Mo
     line_values: dict[str, dict[str, float]] = {}
     buildup, pnl, cashflow = _classify(sheet)
 
-    def val_at(line, p: str) -> float:
-        # p is "prev" | "curr"; sources read "..._{p}" / "..._{P}" so {p}->prev/curr,
-        # {P}->PY/CY (the column suffixes carry their own leading underscore).
+    def resolve_line(line, p: str) -> dict[str, float]:
+        # Resolve every bucket of a line at period p ("prev"|"curr"), applying the
+        # per-bucket direction sign. {p}->prev/curr, {P}->PY/CY.
         m = mapping.get((sheet.name, line.id))
-        if not m or not m.source:
-            return 0.0
+        vals = {b: 0.0 for b in vbuckets}
+        if not m:
+            return vals
         big_p = "CY" if p == "curr" else "PY"
-        return _resolve(m.source, row, columns, p=p, big_p=big_p, missing=result.missing_columns)
+        for b, bsrc in m.buckets.items():
+            if b not in vals:
+                continue
+            if bsrc.tier == TIER_OVERRIDE:
+                mag = _num(row.get(_OVERRIDE_COL.format(key=bsrc.override_key), 0.0))
+            elif bsrc.source:
+                mag = _resolve(bsrc.source, row, columns, p=p, big_p=big_p, missing=result.missing_columns)
+            else:
+                mag = 0.0  # tier M: manual/0 until an override fills it
+            vals[b] = bsrc.sign_mult * mag
+        return vals
 
     opening = {b: 0.0 for b in vbuckets}
     closing_indep = {b: 0.0 for b in vbuckets}
     for ln in buildup:
-        b = _line_bucket(ln)
-        if b is None:
-            continue
-        ov, cv = val_at(ln, "prev"), val_at(ln, "curr")
-        line_values.setdefault(ln.id, {})[b] = ov
-        opening[b] += ov
-        closing_indep[b] += cv
+        ov, cv = resolve_line(ln, "prev"), resolve_line(ln, "curr")
+        line_values[ln.id] = ov
+        for b in vbuckets:
+            opening[b] += ov[b]
+            closing_indep[b] += cv[b]
 
     pnl_total = {b: 0.0 for b in vbuckets}
     for ln in pnl:
-        b = _line_bucket(ln)
-        v = val_at(ln, "curr")
-        if b is not None:
-            line_values.setdefault(ln.id, {})[b] = v
-            pnl_total[b] += v
+        v = resolve_line(ln, "curr")
+        line_values[ln.id] = v
+        for b in vbuckets:
+            pnl_total[b] += v[b]
 
     cf_total = {b: 0.0 for b in vbuckets}
     for ln in cashflow:
-        b = _line_bucket(ln)
-        v = val_at(ln, "curr")
-        if b is not None:
-            line_values.setdefault(ln.id, {})[b] = v
-            cf_total[b] += v
+        v = resolve_line(ln, "curr")
+        line_values[ln.id] = v
+        for b in vbuckets:
+            cf_total[b] += v[b]
 
     closing_rf = {b: opening[b] + pnl_total[b] - cf_total[b] for b in vbuckets}
     residual = {b: closing_indep[b] - closing_rf[b] for b in vbuckets}
@@ -293,3 +303,111 @@ def _build_sheet(sheet: Sheet, row: dict, columns: set[str], mapping, result: Mo
         residual=residual,
         line_values=line_values,
     )
+
+
+def _num(v) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return f if f == f and f not in (float("inf"), float("-inf")) else 0.0
+
+
+def sum_sheet_results(items: list[SheetResult]) -> SheetResult:
+    """Additively combine SheetResults (same sheet) into one — the basis for the
+    entity/class roll-ups (every disclosure line is additive across pairs, so the
+    aggregate always ties to the sum of its parts)."""
+    buckets = list(items[0].opening) if items else []
+
+    def agg(attr: str) -> dict[str, float]:
+        return {b: sum(getattr(x, attr).get(b, 0.0) for x in items) for b in buckets}
+
+    line_values: dict[str, dict[str, float]] = {}
+    for x in items:
+        for lid, bv in x.line_values.items():
+            d = line_values.setdefault(lid, {})
+            for b, v in bv.items():
+                d[b] = d.get(b, 0.0) + v
+    return SheetResult(
+        sheet=items[0].sheet if items else "",
+        opening=agg("opening"),
+        closing_rollforward=agg("closing_rollforward"),
+        closing_independent=agg("closing_independent"),
+        residual=agg("residual"),
+        line_values=line_values,
+    )
+
+
+def aggregated_views(result: MovementResult, *, levels=("entity", "class", "cohort")) -> list[dict]:
+    """Group the per-pair results into the requested grains. Returns an ordered list of
+    ``{"level", "label", "reserving_class", "uwy", "sheets": {name: SheetResult}}``."""
+    sheet_names = list(result.pairs[0].sheets) if result.pairs else []
+    views: list[dict] = []
+    if "entity" in levels and result.pairs:
+        views.append({
+            "level": "entity", "label": "Total (all classes)", "reserving_class": None, "uwy": None,
+            "sheets": {sn: sum_sheet_results([p.sheets[sn] for p in result.pairs]) for sn in sheet_names},
+        })
+    if "class" in levels:
+        by_class: dict[str, list] = {}
+        for p in result.pairs:
+            by_class.setdefault(p.reserving_class, []).append(p)
+        for rc in sorted(by_class):
+            views.append({
+                "level": "class", "label": rc, "reserving_class": rc, "uwy": None,
+                "sheets": {sn: sum_sheet_results([p.sheets[sn] for p in by_class[rc]]) for sn in sheet_names},
+            })
+    if "cohort" in levels:
+        for p in sorted(result.pairs, key=lambda p: (p.reserving_class, p.uwy)):
+            views.append({
+                "level": "cohort", "label": f"{p.reserving_class} — UWY {p.uwy}",
+                "reserving_class": p.reserving_class, "uwy": p.uwy, "sheets": dict(p.sheets),
+            })
+    return views
+
+
+# ── reconciliation control (plan Q3: hard, tolerance-based tie-out) ───────────
+
+#: A per-(pair, sheet, bucket) roll-forward tie-out breaches this if the residual
+#: (closing_independent − [opening + ΔPnL − cash flows]) exceeds BOTH thresholds.
+DEFAULT_TOL_ABS = 1.0  # currency units
+DEFAULT_TOL_REL = 1e-4  # 0.01% of the bucket's balance scale
+
+
+def reconciliation_report(
+    result: MovementResult, *, tol_abs: float = DEFAULT_TOL_ABS, tol_rel: float = DEFAULT_TOL_REL
+) -> dict:
+    """Machine-readable tie-out report over every (pair, sheet, bucket).
+
+    The roll-forward identity ``closing = opening + ΔPnL − cash flows`` must hold; the
+    residual is the balancing gap. A cell *breaches* when ``|residual|`` exceeds both an
+    absolute floor and a relative fraction of the bucket's balance scale (so tiny buckets
+    don't false-positive and huge ones aren't masked). Callers gate sign-off on
+    ``breaches == 0``; the run itself is never hard-failed (the numbers must stay visible).
+    """
+    breaches: list[dict] = []
+    max_res = 0.0
+    checked = 0
+    for pr in result.pairs:
+        for sname, s in pr.sheets.items():
+            for b, r in s.residual.items():
+                checked += 1
+                max_res = max(max_res, abs(r))
+                scale = max(abs(s.opening.get(b, 0.0)), abs(s.closing_independent.get(b, 0.0)), 1.0)
+                if abs(r) > tol_abs and abs(r) > tol_rel * scale:
+                    breaches.append({
+                        "reserving_class": pr.reserving_class, "uwy": pr.uwy,
+                        "sheet": sname, "bucket": b,
+                        "residual": round(r, 2), "scale": round(scale, 2),
+                    })
+    breaches.sort(key=lambda x: -abs(x["residual"]))
+    return {
+        "pairs": len(result.pairs),
+        "cells_checked": checked,
+        "breaches": len(breaches),
+        "ties_out": not breaches,
+        "max_abs_residual": round(max_res, 2),
+        "tolerance": {"abs": tol_abs, "rel": tol_rel},
+        "top_breaches": breaches[:50],
+        "missing_columns": sorted(result.missing_columns),
+    }

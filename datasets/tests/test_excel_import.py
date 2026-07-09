@@ -131,6 +131,30 @@ class ExcelImportServiceTests(TestCase):
         # Date coercion
         self.assertEqual(str(rows[0].policy_start_date), "2024-01-01")
 
+    def test_movement_override_import_round_trip(self):
+        """The IFRS 17 movement-override kind imports from its disclosure-labelled
+        headers into typed MovementOverrideRow records (override_key fields)."""
+        from datasets.models import MovementOverrideRow
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append([
+            "RESERVINGCLASS", "UWY",
+            "Loss Recovery Component for new underlying onerous contracts",
+        ])
+        ws.append(["PROPERTY", 2023, 1500.25])
+        buf = io.BytesIO()
+        wb.save(buf)
+        ds = import_excel_to_dataset(
+            organization=self.org, kind=Dataset.Kind.MOVEMENT_OVERRIDE,
+            name="Overrides YE24", file_bytes=buf.getvalue(), created_by=self.user,
+        )
+        self.assertEqual(ds.row_count, 1)
+        row = MovementOverrideRow.objects.get(dataset=ds)
+        self.assertEqual(row.reserving_class, "PROPERTY")
+        self.assertEqual(row.uwy, 2023)
+        self.assertEqual(row.ri_loss_recovery_new_onerous, Decimal("1500.25"))
+
     def test_unknown_columns_are_ignored(self):
         wb = Workbook()
         ws = wb.active

@@ -36,6 +36,11 @@ class Dataset(models.Model):
         EXPENSE_CF = "expense_cf", "Expense Cash Flow"
         PREVIOUS_PERIOD_LIC = "previous_period_lic", "Previous Period — LIC_BOP"
         PREVIOUS_PERIOD_UPR = "previous_period_upr", "Previous Period — UPR-DAC_BOP"
+        # IFRS 17 movement disclosure manual-override inputs (class×cohort keyed).
+        # These are the judgment lines the engine cannot compute (onerous Loss
+        # Recovery Components, RI non-performance provision, PDR/RI Accrual Reserve
+        # BOP, RI finance P&L). Consumed by module2_engine/movement, not the core engine.
+        MOVEMENT_OVERRIDE = "ifrs17_movement_override", "IFRS 17 Movement Override (RI)"
 
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
@@ -422,6 +427,47 @@ class PreviousPeriodUprRow(_BaseRow):
         ]
 
 
+class MovementOverrideRow(_BaseRow):
+    """One (reserving_class, cohort/UWY) of manual IFRS 17 movement-disclosure
+    overrides — the RI judgment lines the engine cannot derive. Column set mirrors
+    the client's ``Template Info`` override inputs; each field name is the stable
+    ``override_key`` the movement mapping references. Consumed by
+    ``module2_engine.movement.compute.build_sama_movement(overrides=...)``.
+    """
+
+    reserving_class = models.CharField(max_length=128, db_index=True)
+    uwy = models.IntegerField()  # cohort
+    ri_loss_recovery_new_onerous = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_loss_recovery_reversal_amortization = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_loss_recovery_assumption_change = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_provision_nonperformance_change = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_finance_pnl = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_pdr_accrual_reserve_bop = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_methodology_diff_loss_recovery_bop = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    ri_accrual_reserve_specify = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+
+    class Meta(_BaseRow.Meta):
+        indexes = [
+            models.Index(fields=["dataset", "reserving_class"]),
+        ]
+
+
 # Kind → row model lookup. Adapter and serializers use this to route to
 # the right table without an if/elif chain.
 ROW_MODEL_FOR_KIND = {
@@ -431,6 +477,7 @@ ROW_MODEL_FOR_KIND = {
     Dataset.Kind.EXPENSE_CF: ExpenseCfRow,
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PreviousPeriodLicRow,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PreviousPeriodUprRow,
+    Dataset.Kind.MOVEMENT_OVERRIDE: MovementOverrideRow,
 }
 
 

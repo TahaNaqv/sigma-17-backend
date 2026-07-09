@@ -105,6 +105,21 @@ PREVIOUS_PERIOD_UPR_DB_TO_EXCEL = {
     "ucr": "UCR",
 }
 
+# IFRS 17 movement override inputs. The Excel headers use the disclosure line labels
+# (readable for the actuary); the db field name is the movement mapping's override_key.
+MOVEMENT_OVERRIDE_DB_TO_EXCEL = {
+    "reserving_class": "RESERVINGCLASS",
+    "uwy": "UWY",
+    "ri_loss_recovery_new_onerous": "Loss Recovery Component for new underlying onerous contracts",
+    "ri_loss_recovery_reversal_amortization": "Reversal/amortization of LRC following an assumed pattern",
+    "ri_loss_recovery_assumption_change": "Change in LRC due to changes in assumptions for underlying onerous contracts",
+    "ri_provision_nonperformance_change": "Change in Provision for risk of RI non-performance",
+    "ri_finance_pnl": "Reinsurance finance expenses/income - P&L",
+    "ri_pdr_accrual_reserve_bop": "Other methodology diff (PDR) BOP / RI Accrual Reserve BOP",
+    "ri_methodology_diff_loss_recovery_bop": "Other methodology diff BOP / Loss Recovery component BOP",
+    "ri_accrual_reserve_specify": "RI Accrual Reserve",
+}
+
 
 DB_TO_EXCEL_FOR_KIND = {
     Dataset.Kind.PREMIUM: PREMIUM_DB_TO_EXCEL,
@@ -113,6 +128,7 @@ DB_TO_EXCEL_FOR_KIND = {
     Dataset.Kind.EXPENSE_CF: EXPENSE_CF_DB_TO_EXCEL,
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PREVIOUS_PERIOD_LIC_DB_TO_EXCEL,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PREVIOUS_PERIOD_UPR_DB_TO_EXCEL,
+    Dataset.Kind.MOVEMENT_OVERRIDE: MOVEMENT_OVERRIDE_DB_TO_EXCEL,
 }
 
 
@@ -148,6 +164,10 @@ REQUIRED_FIELDS_FOR_KIND = {
         "gross_ri",
     ),
     Dataset.Kind.PREVIOUS_PERIOD_UPR: (
+        "reserving_class",
+        "uwy",
+    ),
+    Dataset.Kind.MOVEMENT_OVERRIDE: (
         "reserving_class",
         "uwy",
     ),

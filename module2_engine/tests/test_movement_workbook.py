@@ -1,6 +1,6 @@
 """Render smoke test for the movement workbook — CI-safe (synthetic frames, no
-desktop files). Asserts the workbook generates, opens, and has the expected
-one-sheet-per-class structure with opening/closing rows."""
+desktop files). Asserts the workbook generates, opens, has the entity + per-class
+structure, faithful subtotals, and a JSON companion that ties out."""
 
 import io
 import types
@@ -8,7 +8,8 @@ import types
 import pandas as pd
 
 from module2_engine.movement.compute import build_sama_movement
-from module2_engine.movement.workbook import render_sama_workbook
+from module2_engine.movement.schema import SCHEMA
+from module2_engine.movement.workbook import build_json_companion, render_sama_workbook
 
 
 def _frames():
@@ -31,22 +32,50 @@ def _frames():
     return types.SimpleNamespace(ifrs_summary_df=ifrs, allocate_sheets={"LC": lc})
 
 
-def test_workbook_renders_one_sheet_per_class():
+def test_workbook_has_entity_total_and_per_class_sheets():
     res = build_sama_movement(_frames())
     xlsx = render_sama_workbook(res, reporting_date="31/12/2024")
     assert isinstance(xlsx, bytes) and len(xlsx) > 0
     xl = pd.ExcelFile(io.BytesIO(xlsx))
-    assert set(xl.sheet_names) == {"MOTOR", "PROPERTY"}
+    assert set(xl.sheet_names) == {"Entity Total", "MOTOR", "PROPERTY"}
 
 
-def test_workbook_contains_opening_closing_and_reporting_date():
+def test_workbook_contains_opening_closing_subtotals_and_reporting_date():
     res = build_sama_movement(_frames())
     xlsx = render_sama_workbook(res, reporting_date="31/12/2024")
     text = pd.ExcelFile(io.BytesIO(xlsx)).parse("MOTOR", header=None).astype(str).to_numpy().tolist()
     flat = " ".join(c for row in text for c in row)
-    assert "as at 01/01" in flat  # opening label unchanged
-    assert "31/12/2024" in flat   # dynamic closing date applied (plan §3b)
-    assert "Reconciliation residual" in flat
+    assert "as at 01/01" in flat        # opening label unchanged
+    assert "31/12/2024" in flat         # dynamic closing date applied (plan §3b)
+    assert "Insurance revenue" in flat  # a real SAMA subtotal is rendered
+    assert "Insurance service result" in flat
+
+
+def test_rendered_opening_subtotal_ties_to_compute():
+    """The opening subtotal (=SUM of the build-up lines) evaluated by the renderer must
+    equal the engine's opening — the faithful-subtotal contract."""
+    res = build_sama_movement(_frames())
+    comp = build_json_companion(res, levels=("cohort",))
+    view = next(v for v in comp["views"] if v["reserving_class"] == "MOTOR")
+    gross = view["sheets"]["Gross"]
+    opening_line = next(ln for ln in gross["lines"] if ln["kind"] == "opening")
+    sres = next(p.sheets["Gross"] for p in res.pairs if p.reserving_class == "MOTOR")
+    for b in SCHEMA.sheets["Gross"].value_buckets:
+        assert round(opening_line["buckets"][b], 2) == round(sres.opening[b], 2)
+
+
+def test_json_companion_entity_equals_sum_of_classes():
+    """Entity Total must equal the sum of the class views (additive aggregation)."""
+    comp = build_json_companion(build_sama_movement(_frames()))
+    entity = next(v for v in comp["views"] if v["level"] == "entity")
+    classes = [v for v in comp["views"] if v["level"] == "class"]
+
+    def total_of(view, sheet, line_id):
+        return next(ln["total"] for ln in view["sheets"][sheet]["lines"] if ln.get("id") == line_id)
+
+    entity_upr = total_of(entity, "Gross", "upr")
+    summed = round(sum(total_of(c, "Gross", "upr") for c in classes), 2)
+    assert round(entity_upr, 2) == summed
 
 
 def test_render_works_without_xlsxwriter():

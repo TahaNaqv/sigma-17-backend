@@ -1473,6 +1473,7 @@ class Module2MovementJobView(APIView):
         expense_cf_ds_id = (request.POST.get("expense_cf_dataset_id") or "").strip()
         previous_lic_ds_id = (request.POST.get("previous_period_lic_dataset_id") or "").strip()
         previous_upr_ds_id = (request.POST.get("previous_period_upr_dataset_id") or "").strip()
+        override_ds_id = (request.POST.get("movement_override_dataset_id") or "").strip()
 
         # XOR per slot — identical contract to the process job.
         if expense and expense_cf_ds_id:
@@ -1545,6 +1546,12 @@ class Module2MovementJobView(APIView):
             expected_kind=Dataset.Kind.PREVIOUS_PERIOD_UPR,
             field_name="previous_period_upr_dataset_id",
         )
+        override_datasets = _resolve_datasets(
+            request,
+            ids=[override_ds_id] if override_ds_id else [],
+            expected_kind=Dataset.Kind.MOVEMENT_OVERRIDE,
+            field_name="movement_override_dataset_id",
+        )
 
         upload_files = [f for f in (previous, expense) if f]
         if upload_files:
@@ -1585,6 +1592,8 @@ class Module2MovementJobView(APIView):
             dataset_snapshots["previous_period_lic"] = _snapshot_for_job(previous_lic_datasets, job)
         if previous_upr_datasets:
             dataset_snapshots["previous_period_upr"] = _snapshot_for_job(previous_upr_datasets, job)
+        if override_datasets:
+            dataset_snapshots["movement_override"] = _snapshot_for_job(override_datasets, job)
 
         meta = job.input_meta or {}
         meta["files"] = meta_files

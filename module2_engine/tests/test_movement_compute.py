@@ -107,15 +107,66 @@ def test_both_sheets_emitted_per_pair():
     assert set(res.pairs[0].sheets) == {"Gross", "RI"}
 
 
-def test_cy_py_payment_side_frame_is_consumed():
-    """§9.1: the movement-only CY/PY Paid split feeds the incurred/past-service
-    paid lines (which would otherwise resolve to 0)."""
-    f = _frames([_base_row()])
-    f.cy_py_payment = pd.DataFrame(
-        [{"RESERVINGCLASS": "TEST", "UWY": 2023,
-          "GROSS - CY Payment": 100.0, "GROSS - PY Payment": -50.0,
-          "RI - CY Payment": 0.0, "RI - PY Payment": 0.0}]
-    )
-    g = C.build_sama_movement(f).pairs[0].sheets["Gross"]
+def test_cy_py_paid_read_from_combined_summary_columns():
+    """The client mapping sources the incurred/past-service paid lines from the
+    Combined-Summary 'Gross CY Paid'/'Gross PY Paid' columns (present in IFRS Summary)
+    directly — no derived CY/PY side-frame needed."""
+    row = _base_row()
+    row["Gross CY Paid"] = 100.0
+    row["Gross PY Paid"] = 50.0
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    # both lines carry sign '+' -> positive magnitude, in the LIC excl RA bucket
     assert g.line_values["incurred_in_cy_paid_in_cy"]["LIC_excl_RA"] == 100.0
-    assert g.line_values["paid_in_cy"]["LIC_excl_RA"] == -50.0
+    assert g.line_values["paid_in_cy"]["LIC_excl_RA"] == 50.0
+
+
+def test_dual_bucket_line_populates_ra_bucket():
+    """A line with sources in two buckets (Incurred CY OS -> LIC excl RA + Risk
+    Adjustment) now fills BOTH — the old single-bucket router dropped the RA half."""
+    row = _base_row()
+    row["GROSS - CY O/S"] = 80.0
+    row["GROSS - CY RA (OS)"] = 7.0
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    lv = g.line_values["incurred_in_cy_os_at_end_cy"]
+    assert lv["LIC_excl_RA"] == 80.0
+    assert lv["Risk_Adjustment"] == 7.0
+
+
+def test_sign_applied_from_mapping():
+    """DAC carries sign '-': its opening LRC contribution is the negated magnitude."""
+    row = _base_row()  # DAC_prev = 10.0
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    assert g.line_values["dac"]["LRC_excl_LC"] == -10.0
+
+
+def test_reconciliation_report_shape_and_counts():
+    res = C.build_sama_movement(_frames([_base_row("A", 2022), _base_row("B", 2023)]))
+    rep = C.reconciliation_report(res)
+    assert rep["pairs"] == 2
+    assert rep["cells_checked"] == 2 * 2 * 4  # pairs × sheets × value buckets
+    assert isinstance(rep["ties_out"], bool)
+    assert rep["breaches"] == len(rep["top_breaches"]) or rep["breaches"] > len(rep["top_breaches"])
+    assert set(rep["tolerance"]) == {"abs", "rel"}
+
+
+def test_reconciliation_flags_a_break():
+    """An opening balance with no offsetting movement/closing must breach the tie-out."""
+    row = _base_row()
+    res = C.build_sama_movement(_frames([row]))
+    # force a break: closing_independent moved far from the roll-forward closing
+    res.pairs[0].sheets["Gross"].residual["LIC_excl_RA"] = 10_000_000.0
+    rep = C.reconciliation_report(res)
+    assert rep["ties_out"] is False and rep["breaches"] >= 1
+
+
+def test_override_frame_fills_ri_manual_line():
+    """A tier-O line resolves from the MovementOverride frame (via __ovr__<key>),
+    not the default 0."""
+    ovr = pd.DataFrame([{"RESERVINGCLASS": "TEST", "UWY": 2023,
+                         "ri_loss_recovery_new_onerous": 500.0}])
+    ri = C.build_sama_movement(_frames([_base_row()]), overrides=ovr).pairs[0].sheets["RI"]
+    lid = "loss_recovery_component_for_new_underlying_onerous_contracts"
+    assert ri.line_values[lid]["Loss_Recovery_Component"] == 500.0
+    # without the override the same line is 0
+    ri0 = C.build_sama_movement(_frames([_base_row()])).pairs[0].sheets["RI"]
+    assert ri0.line_values[lid]["Loss_Recovery_Component"] == 0.0

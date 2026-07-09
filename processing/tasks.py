@@ -1,3 +1,4 @@
+import json
 import logging
 import shutil
 import tempfile
@@ -13,7 +14,12 @@ from module1_engine import (
     run_policy_level_upr,
     run_update_reserve_summary,
 )
-from module2_engine import run_module2_allocate, run_module2_movement, run_module2_process
+from module2_engine import (
+    reconciliation_report,
+    run_module2_allocate,
+    run_module2_movement,
+    run_module2_process,
+)
 from processing.models import Module1Job
 from processing.services.retention import (
     cascade_purge as _cascade_purge,
@@ -59,6 +65,10 @@ def _materialize_job_snapshots(job: Module1Job) -> None:
     job_root_path = job_root(job)
     for kind, snap_ids in snaps_by_kind.items():
         if not snap_ids:
+            continue
+        if kind == Dataset.Kind.MOVEMENT_OVERRIDE:
+            # Consumed as a DataFrame by the movement layer, not staged as an
+            # engine input sheet — see _load_movement_overrides.
             continue
         snapshots = list(
             DatasetSnapshot.objects.filter(
@@ -109,6 +119,26 @@ def _materialize_job_snapshots(job: Module1Job) -> None:
                 write_snapshot_as_sheet(snap, target, sheet_name=recipe["sheet_name"])
         else:
             raise ValueError(f"Unknown KIND_RECIPE mode '{mode}' for kind '{kind}'.")
+
+def _load_movement_overrides(job: Module1Job):
+    """Load the job's MovementOverride snapshot as a class×cohort DataFrame for the
+    movement layer. Columns keep their DB names (= the mapping's override_keys); only
+    the keys are renamed to the engine's RESERVINGCLASS/UWY. Returns None if absent.
+    """
+    meta = job.input_meta or {}
+    snap_ids = (meta.get("dataset_snapshots") or {}).get("movement_override")
+    if not snap_ids:
+        return None
+    import pandas as pd
+
+    snaps = DatasetSnapshot.objects.filter(id__in=snap_ids, organization=job.organization)
+    frames = [pd.DataFrame(s.rows_payload) for s in snaps if s.rows_payload]
+    if not frames:
+        return None
+    df = pd.concat(frames, ignore_index=True)
+    df = df.drop(columns=[c for c in ("id", "row_index") if c in df.columns])
+    return df.rename(columns={"reserving_class": "RESERVINGCLASS", "uwy": "UWY"})
+
 
 logger = logging.getLogger(__name__)
 
@@ -504,6 +534,7 @@ def run_module2_movement_task(self, job_id: str) -> None:
         combined_bytes = read_artifact_bytes(
             source_job=job.source_job, artifact=ARTIFACT_COMBINED_SUMMARY
         )
+        overrides = _load_movement_overrides(job)
 
         xlsx, result = run_module2_movement(
             combined_bytes,
@@ -511,20 +542,36 @@ def run_module2_movement_task(self, job_id: str) -> None:
             expense_path.read_bytes(),
             accounting_period,
             selected_ulr,
+            overrides=overrides,
             reporting_date=reporting_date,
             classes=scope.get("reserving_classes") or None,
             uwys=scope.get("uwys") or None,
         )
         (out_dir / "IFRS17_Movement_Analysis.xlsx").write_bytes(xlsx)
-        # Record non-fatal projection diagnostics (missing-column gaps) on the job
-        # so the UI can surface them without cracking the workbook.
-        if result.missing_columns:
-            meta["movement_warnings"] = {
-                "missing_columns": sorted(result.missing_columns),
-                "pairs": len(result.pairs),
-            }
-            job.input_meta = meta
-            job.save(update_fields=["input_meta"])
+        # Machine-readable companion (structured per-grain lines) for API/downstream.
+        from module2_engine.movement.workbook import build_json_companion
+
+        (out_dir / "IFRS17_Movement_Analysis.json").write_text(
+            json.dumps(build_json_companion(result, reporting_date=reporting_date)),
+            encoding="utf-8",
+        )
+        # Record the reconciliation control + non-fatal projection diagnostics on the job
+        # so the UI can gate sign-off and surface gaps without cracking the workbook.
+        recon = reconciliation_report(result)
+        meta["movement_warnings"] = {
+            "missing_columns": recon["missing_columns"],
+            "pairs": recon["pairs"],
+            "reconciliation": {
+                "ties_out": recon["ties_out"],
+                "breaches": recon["breaches"],
+                "cells_checked": recon["cells_checked"],
+                "max_abs_residual": recon["max_abs_residual"],
+                "tolerance": recon["tolerance"],
+                "top_breaches": recon["top_breaches"],
+            },
+        }
+        job.input_meta = meta
+        job.save(update_fields=["input_meta"])
 
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")

@@ -145,6 +145,98 @@ class MovementApiTests(TestCase):
         mocked_delay.assert_not_called()
 
     @patch("processing.views.run_module2_movement_task.delay")
+    def test_accepts_movement_override_dataset(self, mocked_delay):
+        from datasets.models import Dataset, MovementOverrideRow
+
+        allocate = self._allocate_job("mv-ovr")
+        ds = Dataset.objects.create(
+            organization=self.org, kind=Dataset.Kind.MOVEMENT_OVERRIDE,
+            name="ovr", source=Dataset.Source.MANUAL, created_by=self.user,
+        )
+        MovementOverrideRow.objects.create(
+            dataset=ds, row_index=0, reserving_class="PROPERTY", uwy=2023,
+            ri_loss_recovery_new_onerous="500.00",
+        )
+        prev, exp = self._files()
+        res = self.client.post(
+            URL,
+            {
+                "allocate_job_id": str(allocate.id),
+                "accounting_period": "2024",
+                "previous_period": prev,
+                "expense_cf": exp,
+                "movement_override_dataset_id": str(ds.id),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertIn("movement_override", job.input_meta["dataset_snapshots"])
+        mocked_delay.assert_called_once()
+
+    @patch("processing.views.run_module2_movement_task.delay")
+    def test_rejects_wrong_kind_override_dataset(self, mocked_delay):
+        from datasets.models import Dataset
+
+        allocate = self._allocate_job("mv-ovr-wrong")
+        ds = Dataset.objects.create(
+            organization=self.org, kind=Dataset.Kind.EXPENSE_CF,
+            name="not-ovr", source=Dataset.Source.MANUAL, created_by=self.user,
+        )
+        prev, exp = self._files()
+        res = self.client.post(
+            URL,
+            {
+                "allocate_job_id": str(allocate.id),
+                "accounting_period": "2024",
+                "previous_period": prev,
+                "expense_cf": exp,
+                "movement_override_dataset_id": str(ds.id),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
+
+    def test_load_movement_overrides_builds_frame_from_snapshot(self):
+        """The task seam the mocked endpoint test skips: snapshot → serializer →
+        class×cohort frame with override_key columns."""
+        from datasets.models import Dataset, MovementOverrideRow
+        from datasets.services.snapshots import create_snapshot
+        from processing.tasks import _load_movement_overrides
+
+        ds = Dataset.objects.create(
+            organization=self.org, kind=Dataset.Kind.MOVEMENT_OVERRIDE,
+            name="ovr", source=Dataset.Source.MANUAL, created_by=self.user,
+        )
+        MovementOverrideRow.objects.create(
+            dataset=ds, row_index=0, reserving_class="PROPERTY", uwy=2023,
+            ri_loss_recovery_new_onerous="500.00",
+        )
+        snap = create_snapshot(dataset=ds)
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_MOVEMENT, status=Module1Job.Status.PENDING,
+            input_meta={"dataset_snapshots": {"movement_override": [str(snap.id)]}},
+        )
+        df = _load_movement_overrides(job)
+        self.assertIsNotNone(df)
+        r = df.iloc[0]
+        self.assertEqual(r["RESERVINGCLASS"], "PROPERTY")
+        self.assertEqual(int(r["UWY"]), 2023)
+        self.assertEqual(float(r["ri_loss_recovery_new_onerous"]), 500.0)
+
+    def test_load_movement_overrides_none_when_absent(self):
+        from processing.tasks import _load_movement_overrides
+
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_MOVEMENT, status=Module1Job.Status.PENDING,
+            input_meta={},
+        )
+        self.assertIsNone(_load_movement_overrides(job))
+
+    @patch("processing.views.run_module2_movement_task.delay")
     def test_rejects_bad_scope_json(self, mocked_delay):
         allocate = self._allocate_job("mv-badscope")
         prev, exp = self._files()

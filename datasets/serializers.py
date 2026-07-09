@@ -14,6 +14,7 @@ from .models import (
     Dataset,
     DatasetSnapshot,
     ExpenseCfRow,
+    MovementOverrideRow,
     PremiumRow,
     PreviousPeriodLicRow,
     PreviousPeriodUprRow,
@@ -233,6 +234,23 @@ class PreviousPeriodUprRowSerializer(_RowBaseSerializer):
         )
 
 
+class MovementOverrideRowSerializer(_RowBaseSerializer):
+    class Meta(_RowBaseSerializer.Meta):
+        model = MovementOverrideRow
+        fields = _RowBaseSerializer.Meta.fields + (
+            "reserving_class",
+            "uwy",
+            "ri_loss_recovery_new_onerous",
+            "ri_loss_recovery_reversal_amortization",
+            "ri_loss_recovery_assumption_change",
+            "ri_provision_nonperformance_change",
+            "ri_finance_pnl",
+            "ri_pdr_accrual_reserve_bop",
+            "ri_methodology_diff_loss_recovery_bop",
+            "ri_accrual_reserve_specify",
+        )
+
+
 ROW_SERIALIZER_FOR_KIND = {
     Dataset.Kind.PREMIUM: PremiumRowSerializer,
     Dataset.Kind.CLAIMS_PAID: ClaimsPaidRowSerializer,
@@ -240,6 +258,7 @@ ROW_SERIALIZER_FOR_KIND = {
     Dataset.Kind.EXPENSE_CF: ExpenseCfRowSerializer,
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PreviousPeriodLicRowSerializer,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PreviousPeriodUprRowSerializer,
+    Dataset.Kind.MOVEMENT_OVERRIDE: MovementOverrideRowSerializer,
 }
 
 

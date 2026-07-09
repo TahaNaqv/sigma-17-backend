@@ -945,14 +945,17 @@ def run_module2_movement(
     reporting_date: str | None = None,
     classes: list[str] | None = None,
     uwys: list[int] | None = None,
+    overrides=None,
 ) -> tuple[bytes, Any]:
     """Produce the IFRS 17 movement-analysis disclosure workbook.
 
     Reuses the same in-memory ``ProcessFrames`` as ``run_module2_process`` (no
     dtype-sensitive round-trip), projects them into the per-(class, UWY) SAMA
-    Gross + RI tables, and renders the workbook. Returns ``(xlsx_bytes, result)``
-    where ``result`` is the MovementResult (carries warnings / missing columns).
-    Mapping is PROPOSED pending actuarial sign-off (plan gate #1).
+    Gross + RI tables, and renders the workbook. ``overrides`` (optional) is the
+    class×cohort MovementOverride frame that fills the manual RI judgment lines.
+    Returns ``(xlsx_bytes, result)`` where ``result`` is the MovementResult
+    (carries warnings / missing columns). Mapping is authoritative per the client's
+    signed disclosure file.
     """
     # Local imports: keep the movement package out of the engine import graph
     # until actually used (it pulls schema/mapping JSON at import).
@@ -966,6 +969,6 @@ def run_module2_movement(
         accounting_period,
         selected_ulr_rows,
     )
-    result = build_sama_movement(frames, classes=classes, uwys=uwys)
+    result = build_sama_movement(frames, classes=classes, uwys=uwys, overrides=overrides)
     xlsx = render_sama_workbook(result, reporting_date=reporting_date)
     return xlsx, result
