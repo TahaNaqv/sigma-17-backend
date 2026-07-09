@@ -7,7 +7,7 @@ organization, and gated behind runhistory.view.
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -38,6 +38,7 @@ def _files_meta(n: int) -> dict:
     return {"files": {"field": [{"name": f"f{i}.xlsx"} for i in range(n)]}}
 
 
+@override_settings(SECURE_SSL_REDIRECT=False)
 class ProcessingStatsApiTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name="Org A")
