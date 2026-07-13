@@ -26,10 +26,16 @@ from openpyxl import Workbook, load_workbook
 from processing.models import Module1Job
 from processing.services.reserve_workbook import (
     list_reserve_workbooks,
+    read_reserve_summary_rows,
     read_workbook_cdfs,
     write_workbooks_with_overrides,
 )
 from tenants.models import Organization
+
+# Reserve Summary base columns, in the order the Summary engine writes them.
+_SUMMARY_HEADERS = [
+    "Accident_Period", "EP", "Paid Claims", "OS Claims", "Reported Claims", "Reported LR",
+]
 
 User = get_user_model()
 
@@ -63,6 +69,38 @@ def _build_reserve_workbook(
 
     # Add a third sheet for realism — the service should ignore it.
     wb.create_sheet("Reserve Summary")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _build_reserve_workbook_with_summary(
+    *,
+    paid_cdf_values: list[float],
+    reported_cdf_values: list[float],
+    summary_rows: list[list],
+) -> bytes:
+    """Reserve workbook with a populated Reserve Summary sheet (A–F), matching
+    what the Summary engine emits, plus the two triangle sheets whose Selected
+    CDF rows carry literal values. `summary_rows` are newest-accident-period
+    first, each = [Accident_Period, EP, Paid, OS, Reported, Reported LR]."""
+    wb = Workbook()
+    ws_paid = wb.active
+    ws_paid.title = "Paid Claims Triangle"
+    ws_paid.append(["Accident Period"] + [str(i) for i in range(len(paid_cdf_values))])
+    ws_paid.append(["2022"] + [0] * len(paid_cdf_values))
+    ws_paid.append(["Selected CDF"] + paid_cdf_values)
+
+    ws_rep = wb.create_sheet("Reported Triangle")
+    ws_rep.append(["Accident Period"] + [str(i) for i in range(len(reported_cdf_values))])
+    ws_rep.append(["2022"] + [0] * len(reported_cdf_values))
+    ws_rep.append(["Selected CDF"] + reported_cdf_values)
+
+    ws_sum = wb.create_sheet("Reserve Summary")
+    ws_sum.append(_SUMMARY_HEADERS)
+    for r in summary_rows:
+        ws_sum.append(r)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -205,6 +243,125 @@ class ReserveWorkbookServiceTests(TestCase):
             self.assertEqual(values, [3.0, 2.5, 1.2])
         finally:
             shutil.rmtree(dest, ignore_errors=True)
+
+    # ---- reserve summary rows (Implied LR / Selected Method editor) ----
+
+    def _summary_job(self):
+        wb = _build_reserve_workbook_with_summary(
+            paid_cdf_values=[1.1, 1.5],       # reversed → [1.5, 1.1]
+            reported_cdf_values=[1.2, 1.6],   # reversed → [1.6, 1.2]
+            summary_rows=[
+                ["2024Q1", 1000, 300, 50, 350, 0.35],
+                ["2023Q1", 2000, 800, 100, 900, 0.45],
+            ],
+        )
+        return _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": wb}),
+        )
+
+    def test_read_reserve_summary_rows_derives_cdf_and_columns(self):
+        job = self._summary_job()
+        payload = read_reserve_summary_rows(job, "Motor TP GROSS 2024-12.xlsx")
+        self.assertEqual(payload["reserving_class"], "Motor")
+        rows = payload["rows"]
+        self.assertEqual(len(rows), 2)
+        r0 = rows[0]
+        self.assertEqual(r0["accident_period"], "2024Q1")
+        self.assertEqual(r0["ep"], 1000)
+        self.assertEqual(r0["paid_claims"], 300)
+        self.assertEqual(r0["os_claims"], 50)
+        self.assertEqual(r0["reported_claims"], 350)
+        self.assertAlmostEqual(r0["reported_lr"], 0.35)
+        # newest-first row gets the reversed series' first element
+        self.assertEqual(r0["paid_cdf"], 1.5)
+        self.assertEqual(r0["reported_cdf"], 1.6)
+        self.assertEqual(rows[1]["paid_cdf"], 1.1)
+        self.assertEqual(rows[1]["reported_cdf"], 1.2)
+
+    def test_read_reserve_summary_rows_reflects_cdf_overrides(self):
+        job = self._summary_job()
+        payload = read_reserve_summary_rows(
+            job, "Motor TP GROSS 2024-12.xlsx",
+            cdf_overrides={"Paid Claims Triangle": [2.0, 3.0]},  # reversed → [3.0, 2.0]
+        )
+        rows = payload["rows"]
+        self.assertEqual(rows[0]["paid_cdf"], 3.0)
+        self.assertEqual(rows[1]["paid_cdf"], 2.0)
+        # Reported CDF untouched by a Paid-only override.
+        self.assertEqual(rows[0]["reported_cdf"], 1.6)
+
+    def test_engine_applies_method_overrides_and_reader_matches(self):
+        """run_update_reserve_summary writes the chosen Implied LR + Selected
+        Method into cells G/O (defaults elsewhere), and the CDF the engine
+        writes (H) equals what read_reserve_summary_rows previews."""
+        from openpyxl import load_workbook as _load
+
+        from module1_engine import run_update_reserve_summary
+
+        job = self._summary_job()
+        preview = read_reserve_summary_rows(job, "Motor TP GROSS 2024-12.xlsx")["rows"]
+
+        staging = Path(tempfile.mkdtemp(prefix="reserve-method-out-"))
+        try:
+            # Stage the source workbook (verbatim) into the engine folder.
+            written = write_workbooks_with_overrides(
+                source_job=job, overrides_by_filename={}, dest_folder=staging
+            )
+            self.assertIn("Motor TP GROSS 2024-12.xlsx", written)
+
+            run_update_reserve_summary(
+                str(staging),
+                method_overrides={
+                    "Motor TP GROSS 2024-12.xlsx": {
+                        "2024Q1": {"implied_lr": 0.6, "selected_method": "ELR"},
+                    }
+                },
+            )
+
+            wb = _load(staging / "Motor TP GROSS 2024-12.xlsx", data_only=False)
+            ws = wb["Reserve Summary"]
+            hdr = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
+            g, o, h = hdr["Implied LR"], hdr["Selected Method"], hdr["Paid CDF"]
+            # Row 2 = 2024Q1 (overridden); Row 3 = 2023Q1 (defaults).
+            self.assertEqual(ws.cell(row=2, column=g).value, 0.6)
+            self.assertEqual(ws.cell(row=2, column=o).value, "ELR")
+            self.assertIsNone(ws.cell(row=3, column=g).value)
+            self.assertEqual(ws.cell(row=3, column=o).value, "Paid CL")
+            # Parity: engine's Paid CDF (H) == the reader's preview.
+            self.assertEqual(ws.cell(row=2, column=h).value, preview[0]["paid_cdf"])
+            self.assertEqual(ws.cell(row=3, column=h).value, preview[1]["paid_cdf"])
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    def test_engine_ignores_unknown_accident_period_and_bad_method(self):
+        from openpyxl import load_workbook as _load
+
+        from module1_engine import run_update_reserve_summary
+
+        job = self._summary_job()
+        staging = Path(tempfile.mkdtemp(prefix="reserve-method-bad-"))
+        try:
+            write_workbooks_with_overrides(
+                source_job=job, overrides_by_filename={}, dest_folder=staging
+            )
+            run_update_reserve_summary(
+                str(staging),
+                method_overrides={
+                    "Motor TP GROSS 2024-12.xlsx": {
+                        "9999Q9": {"implied_lr": 0.9, "selected_method": "ELR"},  # no such row
+                        "2024Q1": {"selected_method": "NOT A METHOD"},            # invalid → ignored
+                    }
+                },
+            )
+            wb = _load(staging / "Motor TP GROSS 2024-12.xlsx", data_only=False)
+            ws = wb["Reserve Summary"]
+            hdr = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
+            # 2024Q1 keeps the default method; unknown period changed nothing.
+            self.assertEqual(ws.cell(row=2, column=hdr["Selected Method"]).value, "Paid CL")
+            self.assertIsNone(ws.cell(row=2, column=hdr["Implied LR"]).value)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
     def test_unreferenced_workbooks_are_copied_verbatim(self):
         wb = _build_reserve_workbook(

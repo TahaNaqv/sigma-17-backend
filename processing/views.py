@@ -42,6 +42,7 @@ from .serializers import (
 )
 from .services.reserve_workbook import (
     list_reserve_workbooks,
+    read_reserve_summary_rows,
     read_workbook_cdfs,
 )
 from .services.source_resolver import (
@@ -917,19 +918,40 @@ class Module1UpdateReserveJobView(APIView):
                     {"cdf_overrides": "Must be a JSON object."}
                 )
 
-        if cdf_overrides is not None:
+        # Implied LR / Selected Method overrides — the Excel-free equivalent of
+        # editing the Reserve Summary's G (Implied LR) and O (Selected Method)
+        # cells. Keyed by workbook filename → accident_period →
+        # {implied_lr, selected_method}. Like cdf_overrides, this reads the
+        # reserve workbooks from the source job and is not compatible with
+        # uploaded reserve files. May be combined with cdf_overrides.
+        method_overrides_raw = request.POST.get("method_overrides")
+        method_overrides = None
+        if method_overrides_raw:
+            try:
+                method_overrides = json.loads(method_overrides_raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(
+                    {"method_overrides": "Invalid JSON."}
+                ) from exc
+            if not isinstance(method_overrides, dict):
+                raise ValidationError(
+                    {"method_overrides": "Must be a JSON object."}
+                )
+
+        has_overrides = cdf_overrides is not None or method_overrides is not None
+        if has_overrides:
             if reserve_files:
                 raise ValidationError(
-                    {"detail": "Provide reserve files or cdf_overrides, not both."}
+                    {"detail": "Provide reserve files or overrides, not both."}
                 )
             if combined_source is None:
                 raise ValidationError(
-                    {"source_job_id": "Required when supplying cdf_overrides."}
+                    {"source_job_id": "Required when supplying overrides."}
                 )
         else:
             if not reserve_files:
                 raise ValidationError(
-                    {"reserve": "Provide reserve files or cdf_overrides + source_job_id."}
+                    {"reserve": "Provide reserve files or overrides + source_job_id."}
                 )
 
         _require_at_most_one(
@@ -976,6 +998,8 @@ class Module1UpdateReserveJobView(APIView):
         new_meta = {"files": meta_files}
         if cdf_overrides is not None:
             new_meta["cdf_overrides"] = cdf_overrides
+        if method_overrides is not None:
+            new_meta["method_overrides"] = method_overrides
         job.input_meta = new_meta
         job.save(update_fields=["input_meta"])
 
@@ -1028,6 +1052,44 @@ class Module1ReserveWorkbookCdfView(APIView):
             raise Http404()
         try:
             payload = read_workbook_cdfs(job, filename)
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(payload)
+
+
+class Module1ReserveWorkbookSummaryView(APIView):
+    """GET /api/module1/jobs/{pk}/reserve-workbooks/{filename}/reserve-summary/
+
+    Returns the per-accident-period Reserve Summary rows (EP, Paid, OS, Reported,
+    Reported LR + the Paid/Reported CDF each row will get) so the UI can preview
+    the five method ultimates and let the user choose Implied LR + Selected
+    Method — the web equivalent of editing cells G and O in the Excel output.
+
+    Optional query param `cdf_overrides` (URL-encoded JSON, per-sheet Selected-CDF
+    arrays for this workbook) makes the CDFs reflect pending CDF edits so the
+    preview matches the eventual output.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def get(self, request, pk, filename):
+        job = _get_accessible_job(request, pk)
+        if not job.output_available:
+            raise Http404()
+        cdf_overrides = None
+        raw = request.query_params.get("cdf_overrides")
+        if raw:
+            try:
+                cdf_overrides = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationError({"cdf_overrides": "Invalid JSON."}) from exc
+            if not isinstance(cdf_overrides, dict):
+                raise ValidationError({"cdf_overrides": "Must be a JSON object."})
+        try:
+            payload = read_reserve_summary_rows(
+                job, filename, cdf_overrides=cdf_overrides
+            )
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
         return Response(payload)

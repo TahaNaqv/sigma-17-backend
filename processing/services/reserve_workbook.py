@@ -31,6 +31,11 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from module1_engine import (
+    cdf_for_row,
+    normalize_accident_period,
+    selected_cdf_row_to_series,
+)
 from processing.models import Module1Job
 from processing.services.source_resolver import (
     ARTIFACT_COMBINED_SUMMARY,
@@ -42,6 +47,19 @@ logger = logging.getLogger(__name__)
 
 TRIANGLE_SHEET_NAMES = ("Paid Claims Triangle", "Reported Triangle")
 SELECTED_CDF_LABEL = "Selected CDF"
+RESERVE_SUMMARY_SHEET = "Reserve Summary"
+# Reserve Summary base columns (written by the Summary engine), by header name.
+# Matching by name (not letter) keeps the reader robust if the sheet already
+# carries the appended G–S columns (e.g. an Update-Reserve output re-used as
+# a source).
+_ACCIDENT_PERIOD_HEADER = "Accident_Period"
+_SUMMARY_NUMERIC_HEADERS = {
+    "ep": "EP",
+    "paid_claims": "Paid Claims",
+    "os_claims": "OS Claims",
+    "reported_claims": "Reported Claims",
+    "reported_lr": "Reported LR",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +210,98 @@ def read_workbook_cdfs(source_job: Module1Job, filename: str) -> dict:
     ]
 
     return {**parsed, "triangles": triangles}
+
+
+# ---------------------------------------------------------------------------
+# Reserve Summary rows — powers the Implied LR / Selected Method editor
+# ---------------------------------------------------------------------------
+
+
+def _num(value) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _selected_cdf_series(wb_data_only, wb_formulas, sheet_name: str) -> list[float]:
+    """Per-accident-period CDF series for one triangle sheet, derived exactly as
+    the engine does (blank→2.0 + reverse). Returns [] when the sheet or its
+    Selected CDF row is absent."""
+    if sheet_name not in wb_formulas.sheetnames:
+        return []
+    ws = wb_formulas[sheet_name]
+    ws_data = wb_data_only[sheet_name]
+    cdf_row = _find_selected_cdf_row(ws)
+    if cdf_row is None:
+        return []
+    raw = [
+        ws_data.cell(row=cdf_row, column=col).value
+        for col in range(2, ws.max_column + 1)
+    ]
+    return selected_cdf_row_to_series(raw)
+
+
+def read_reserve_summary_rows(
+    source_job: Module1Job,
+    filename: str,
+    *,
+    cdf_overrides: dict[str, list[float | None]] | None = None,
+) -> dict:
+    """Per-accident-period Reserve Summary rows for the Method-Selection UI.
+
+    Returns the base columns (EP, Paid, OS, Reported, Reported LR) plus the
+    Paid/Reported CDF the engine will assign each row — so the client can
+    preview the five method ultimates and choose Implied LR / Selected Method
+    against exactly what the Update Reserve job will compute. `cdf_overrides`
+    (per-sheet Selected-CDF arrays for THIS workbook) are applied first so the
+    preview stays consistent when the user also edited CDFs.
+
+    Row order matches the engine's `enumerate(...)` over Reserve Summary rows,
+    so `accident_period` is a safe join key back into `method_overrides`.
+    """
+    parsed = _parse_workbook_name(filename)
+    if parsed is None:
+        raise ValueError(f"Workbook name '{filename}' is not parseable.")
+
+    raw = read_artifact_bytes(source_job=source_job, artifact=filename)
+    if cdf_overrides:
+        raw = _apply_overrides_to_bytes(raw, cdf_overrides)
+
+    wb_formulas = load_workbook(io.BytesIO(raw), data_only=False)
+    wb_data = load_workbook(io.BytesIO(raw), data_only=True)
+    if RESERVE_SUMMARY_SHEET not in wb_formulas.sheetnames:
+        raise ValueError(f"'{RESERVE_SUMMARY_SHEET}' sheet not found in {filename}.")
+
+    paid_series = _selected_cdf_series(wb_data, wb_formulas, "Paid Claims Triangle")
+    reported_series = _selected_cdf_series(wb_data, wb_formulas, "Reported Triangle")
+
+    ws = wb_data[RESERVE_SUMMARY_SHEET]
+    header_col: dict[str, int] = {}
+    for col in range(1, ws.max_column + 1):
+        h = ws.cell(row=1, column=col).value
+        if h is not None and str(h) not in header_col:
+            header_col[str(h)] = col
+    if _ACCIDENT_PERIOD_HEADER not in header_col:
+        raise ValueError(f"'{_ACCIDENT_PERIOD_HEADER}' column not found in {filename}.")
+
+    ap_col = header_col[_ACCIDENT_PERIOD_HEADER]
+    rows: list[dict] = []
+    # enumerate identically to the engine so `idx` (and thus the CDF a row gets)
+    # aligns row-for-row with what the Update Reserve job will write.
+    for idx, excel_row in enumerate(range(2, ws.max_row + 1)):
+        ap = ws.cell(row=excel_row, column=ap_col).value
+        row = {"accident_period": normalize_accident_period(ap)}
+        for key, header in _SUMMARY_NUMERIC_HEADERS.items():
+            col = header_col.get(header)
+            row[key] = _num(ws.cell(row=excel_row, column=col).value) if col else 0.0
+        row["paid_cdf"] = cdf_for_row(paid_series, idx)
+        row["reported_cdf"] = cdf_for_row(reported_series, idx)
+        rows.append(row)
+
+    return {**parsed, "rows": rows}
 
 
 # ---------------------------------------------------------------------------

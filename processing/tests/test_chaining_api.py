@@ -7,6 +7,7 @@ resolution works.
 """
 
 import io
+import json
 import shutil
 import tempfile
 import zipfile
@@ -304,6 +305,55 @@ class Module1ChainingTests(TestCase):
             format="multipart",
         )
         self.assertEqual(res.status_code, 202, res.content)
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_method_overrides_round_trip(self, mocked_delay):
+        source = _make_successful_source(user=self.user, org=self.org)
+        overrides = {
+            "Motor TP GROSS 2024-12.xlsx": {
+                "2024Q1": {"implied_lr": 0.6, "selected_method": "ELR"},
+            }
+        }
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {
+                "source_job_id": str(source.id),
+                "method_overrides": json.dumps(overrides),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertEqual(job.source_job_id, source.id)
+        self.assertEqual(job.input_meta["method_overrides"], overrides)
+        mocked_delay.assert_called_once()
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_method_overrides_require_source(self, mocked_delay):
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {"method_overrides": json.dumps({"f.xlsx": {}})},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_method_overrides_reject_with_files(self, mocked_delay):
+        source = _make_successful_source(user=self.user, org=self.org)
+        reserve = io.BytesIO(_xlsx_bytes("Reserve"))
+        reserve.name = "ABC_GROSS.xlsx"
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {
+                "reserve": reserve,
+                "source_job_id": str(source.id),
+                "method_overrides": json.dumps({"f.xlsx": {}}),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
 
     def test_uw_preview_from_source(self):
         source = _make_successful_source(user=self.user, org=self.org)

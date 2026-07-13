@@ -587,10 +587,63 @@ def calculate_age_to_age_factors(cumulative_triangle):
         age_to_age_factors.iloc[:, 0] = cumulative_triangle.iloc[:, 0]
     return age_to_age_factors
 
-def run_update_reserve_summary(folder_path: str) -> None:
-    """Update reserve workbooks in folder_path. Raises on error."""
+# The five Selected-Method options (must match the Excel data-validation list
+# and the Ultimate Claims IF() formula branches below).
+RESERVE_METHODS = ("Paid CL", "Reported CL", "ELR", "Paid BF", "Reported BF")
+
+
+def normalize_accident_period(value) -> str:
+    """Stable string key for matching a Reserve Summary row across the read
+    endpoint and the override write. openpyxl may return int / float / str /
+    datetime for the Accident_Period cell; str() it consistently on both sides
+    so the frontend can round-trip the key it was given."""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def selected_cdf_row_to_series(raw_values) -> list[float]:
+    """Turn a Selected CDF row (cell values for columns 2..n, running oldest→
+    newest development) into the per-accident-period CDF series the Reserve
+    Summary consumes: blank cells default to 2.0, then reversed so the series
+    aligns newest-accident-period-first with the Reserve Summary rows.
+
+    Shared by the engine and the reserve-summary reader so both derive an
+    identical Paid/Reported CDF per row (no drift between preview and output).
+    """
+    series = [float(v) if v is not None else 2.0 for v in raw_values]
+    series.reverse()
+    return series
+
+
+def cdf_for_row(series: list[float], idx: int) -> float:
+    """The CDF the engine assigns to Reserve Summary row `idx` (0-based). When
+    there are more summary rows than development columns, the last CDF is reused
+    (matches the engine's `min(idx, n-1)` indexing)."""
+    n = len(series)
+    if not n:
+        return 2.0
+    return series[min(idx, n - 1)]
+
+
+def run_update_reserve_summary(
+    folder_path: str,
+    method_overrides: dict | None = None,
+) -> None:
+    """Update reserve workbooks in folder_path. Raises on error.
+
+    `method_overrides` optionally supplies user-chosen Implied LR + Selected
+    Method per row, keyed by workbook basename then normalized Accident_Period:
+        { "<file>.xlsx": { "<accident_period>": {
+              "implied_lr": <fraction|None>, "selected_method": <method|None> } } }
+    When present, the chosen values are written into cells G (Implied LR) and O
+    (Selected Method) as literals; the ELR/BF/Ultimate/IBNR/ULR/CDF cells stay
+    live Excel formulas, so the downloaded workbook still recomputes and remains
+    editable — exactly as with the Selected-CDF override path.
+    """
     if not folder_path:
         raise ValueError("Folder path is required.")
+    method_overrides = method_overrides or {}
 
     combined_summary_file = "Combined_Summary.xlsx"
     ibnr_summaries = []
@@ -636,23 +689,26 @@ def run_update_reserve_summary(folder_path: str) -> None:
                     continue
 
                 num_cols = ws_paid_triangle.max_column - 1
-                selected_cdf_values_paid_data = []
-                selected_cdf_values_reported_data = []
 
                 # Load workbook with data only to get actual values
                 wb_data_only = load_workbook(output_file_path, data_only=True)
                 ws_paid_triangle_data = wb_data_only['Paid Claims Triangle']
                 ws_reported_triangle_data = wb_data_only['Reported Triangle']
 
-                for col in range(2, num_cols + 2):
-                    paid_value = ws_paid_triangle_data.cell(row=selected_cdf_row_paid, column=col).value
-                    reported_value = ws_reported_triangle_data.cell(row=selected_cdf_row_reported, column=col).value
-                    selected_cdf_values_paid_data.append(float(paid_value) if paid_value is not None else 2.0)
-                    selected_cdf_values_reported_data.append(float(reported_value) if reported_value is not None else 2.0)
+                paid_raw = [
+                    ws_paid_triangle_data.cell(row=selected_cdf_row_paid, column=col).value
+                    for col in range(2, num_cols + 2)
+                ]
+                reported_raw = [
+                    ws_reported_triangle_data.cell(row=selected_cdf_row_reported, column=col).value
+                    for col in range(2, num_cols + 2)
+                ]
+                # Blank→2.0 + reverse, shared with the reserve-summary reader.
+                selected_cdf_values_paid_data = selected_cdf_row_to_series(paid_raw)
+                selected_cdf_values_reported_data = selected_cdf_row_to_series(reported_raw)
 
-                # Reverse CDF values
-                selected_cdf_values_paid_data.reverse()
-                selected_cdf_values_reported_data.reverse()
+                # Per-workbook Implied LR / Selected Method overrides (by row).
+                overrides_for_file = method_overrides.get(file, {})
 
                 # Update Reserve Summary sheet
                 ws = wb['Reserve Summary']
@@ -671,15 +727,11 @@ def run_update_reserve_summary(folder_path: str) -> None:
 
                 reserving_class_data = []
 
-                n_paid = len(selected_cdf_values_paid_data)
-                n_reported = len(selected_cdf_values_reported_data)
                 for idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(existing_headers))):
                     data = {existing_headers[col_idx]: cell.value for col_idx, cell in enumerate(row)}
                     data['Implied LR'] = None
-                    i_paid = min(idx, n_paid - 1) if n_paid else 0
-                    i_reported = min(idx, n_reported - 1) if n_reported else 0
-                    data['Paid CDF'] = selected_cdf_values_paid_data[i_paid] if n_paid else 2.0
-                    data['Reported CDF'] = selected_cdf_values_reported_data[i_reported] if n_reported else 2.0
+                    data['Paid CDF'] = cdf_for_row(selected_cdf_values_paid_data, idx)
+                    data['Reported CDF'] = cdf_for_row(selected_cdf_values_reported_data, idx)
                     data['Paid CL Ultimate'] = data['Paid Claims'] * data['Paid CDF']
                     data['Reported CL Ultimate'] = data['Reported Claims'] * data['Reported CDF']
                     data['ELR Ultimate'] = f'=IFERROR(G{idx + 2} * B{idx + 2},0)'
@@ -690,6 +742,24 @@ def run_update_reserve_summary(folder_path: str) -> None:
                     data['IBNR'] = f'=IFERROR(P{idx + 2} - E{idx + 2},0)'
                     data['ULR'] = f'=IFERROR(P{idx + 2}/B{idx + 2},0)'
                     data['CDF'] = f'=IFERROR(P{idx + 2}/C{idx + 2},0)'
+
+                    # Apply the user's per-row Implied LR / Selected Method choices.
+                    # Writing G + O as literals keeps L–S live formulas, so the
+                    # workbook recomputes ELR/BF/Ultimate/IBNR/ULR/CDF in Excel.
+                    override = overrides_for_file.get(
+                        normalize_accident_period(data.get('Accident_Period'))
+                    )
+                    if override:
+                        implied_lr = override.get('implied_lr')
+                        if implied_lr is not None:
+                            try:
+                                data['Implied LR'] = float(implied_lr)
+                            except (TypeError, ValueError):
+                                pass
+                        method = override.get('selected_method')
+                        if method in RESERVE_METHODS:
+                            data['Selected Method'] = method
+
                     reserving_class_data.append(data)
 
                     # Write updated values back to worksheet
