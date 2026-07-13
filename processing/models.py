@@ -50,6 +50,17 @@ class Module1Job(models.Model):
         null=True,
         blank=True,
     )
+    # Durable, non-user-facing archive of the canonical input workbooks a job
+    # consumed (currently: module2 process/movement Previous_Period.xlsx +
+    # Expense_CF.xlsx). Persisted so a downstream job (e.g. a movement analysis
+    # chained off a process job) can reuse the exact same inputs without the
+    # user re-supplying them. Never surfaced in output preview/download.
+    # Purged together with output_zip by retention.
+    input_archive = models.FileField(
+        upload_to="module1_jobs/inputs/%Y/%m/",
+        null=True,
+        blank=True,
+    )
     input_meta = models.JSONField(default=dict, blank=True)
 
     # Lineage: which earlier job supplied an input artifact to this one.
@@ -121,10 +132,23 @@ class Module1Job(models.Model):
                 # Storage backend can throw on missing files; we still mark
                 # the row as purged so the sweeper doesn't loop on it.
                 pass
+        # The durable input archive is purged on the same retention clock as the
+        # output; a purged job can no longer serve reuse to a downstream job.
+        if self.input_archive:
+            try:
+                self.input_archive.delete(save=False)
+                deleted = True
+            except Exception:
+                pass
         self.output_purged_at = timezone.now()
         # Clear denormalized list since the file is gone.
         self.output_artifacts = []
-        self.save(update_fields=["output_zip", "output_purged_at", "output_artifacts"])
+        self.save(update_fields=[
+            "output_zip",
+            "input_archive",
+            "output_purged_at",
+            "output_artifacts",
+        ])
         return deleted
 
 

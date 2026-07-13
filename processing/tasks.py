@@ -33,6 +33,7 @@ from processing.services.source_resolver import (
     ARTIFACT_COMBINED_SUMMARY,
     list_artifacts_in_zip_path,
     read_artifact_bytes,
+    read_input_archive_bytes,
     stamp_output_artifacts,
     stamp_retention,
 )
@@ -230,6 +231,51 @@ def _resolve_combined_summary_bytes(job: Module1Job, *, fallback_path: Path | No
     if fallback_path is None or not fallback_path.is_file():
         raise ValueError("Combined_Summary.xlsx missing from job staging.")
     return fallback_path.read_bytes()
+
+
+# Member names inside a module2 job's durable input_archive.
+INPUT_ARCHIVE_PREVIOUS = "Previous_Period.xlsx"
+INPUT_ARCHIVE_EXPENSE = "Expense_CF.xlsx"
+
+
+def _persist_input_archive(job: Module1Job, members: dict[str, bytes]) -> None:
+    """Persist the canonical input workbooks a module2 job consumed into the
+    durable, non-user-facing `input_archive` FileField, so a downstream job
+    (e.g. a movement analysis chained off this one) can reuse the exact same
+    bytes without the user re-supplying them. `members` maps archive member
+    name -> workbook bytes.
+    """
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    buf.seek(0)
+    job.input_archive.save(f"{job.id}-inputs.zip", File(buf), save=False)
+    job.save(update_fields=["input_archive"])
+
+
+def _read_or_inherit_input(
+    local_path: Path,
+    member: str,
+    process_job: Module1Job | None,
+    *,
+    label: str,
+) -> bytes:
+    """Return a movement input workbook's bytes: prefer the copy staged on this
+    job (standalone run or a per-slot override), otherwise inherit it from the
+    chained process job's durable input archive. Raises with a clear message
+    when neither is available.
+    """
+    if local_path.is_file():
+        return local_path.read_bytes()
+    if process_job is not None:
+        return read_input_archive_bytes(source_job=process_job, member=member)
+    raise ValueError(
+        f"{label} is missing: supply it or select a Cash Flow Allocation job to reuse."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -486,10 +532,22 @@ def run_module2_process_task(self, job_id: str) -> None:
             source_job=job.source_job, artifact=ARTIFACT_COMBINED_SUMMARY
         )
 
+        previous_bytes = previous_path.read_bytes()
+        expense_bytes = expense_path.read_bytes()
+        # Persist the canonical inputs durably so a movement analysis can later
+        # be chained off this job without the user re-uploading them.
+        _persist_input_archive(
+            job,
+            {
+                INPUT_ARCHIVE_PREVIOUS: previous_bytes,
+                INPUT_ARCHIVE_EXPENSE: expense_bytes,
+            },
+        )
+
         final_bytes = run_module2_process(
             combined_bytes,
-            previous_path.read_bytes(),
-            expense_path.read_bytes(),
+            previous_bytes,
+            expense_bytes,
             accounting_period,
             selected_ulr,
         )
@@ -534,12 +592,39 @@ def run_module2_movement_task(self, job_id: str) -> None:
         combined_bytes = read_artifact_bytes(
             source_job=job.source_job, artifact=ARTIFACT_COMBINED_SUMMARY
         )
+
+        # Previous Period + Expense CF: prefer inputs staged on this job (a
+        # standalone run, or a per-slot override), otherwise inherit the exact
+        # bytes from the chained process job's durable input archive so the user
+        # doesn't re-supply what Cash Flow Allocation already captured.
+        process_job = None
+        process_job_id = meta.get("process_job_id")
+        if process_job_id:
+            process_job = Module1Job.objects.filter(
+                pk=process_job_id, organization=job.organization
+            ).first()
+            if process_job is None:
+                raise ValueError("Referenced Cash Flow Allocation job was not found.")
+        previous_bytes = _read_or_inherit_input(
+            previous_path, INPUT_ARCHIVE_PREVIOUS, process_job, label="Previous Period"
+        )
+        expense_bytes = _read_or_inherit_input(
+            expense_path, INPUT_ARCHIVE_EXPENSE, process_job, label="Expense CF"
+        )
+        # Persist for symmetry so this movement job is itself reusable/auditable.
+        _persist_input_archive(
+            job,
+            {
+                INPUT_ARCHIVE_PREVIOUS: previous_bytes,
+                INPUT_ARCHIVE_EXPENSE: expense_bytes,
+            },
+        )
         overrides = _load_movement_overrides(job)
 
         xlsx, result = run_module2_movement(
             combined_bytes,
-            previous_path.read_bytes(),
-            expense_path.read_bytes(),
+            previous_bytes,
+            expense_bytes,
             accounting_period,
             selected_ulr,
             overrides=overrides,

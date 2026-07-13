@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 ARTIFACT_COMBINED_SUMMARY = "Combined_Summary.xlsx"
+ARTIFACT_MODULE2_FINAL = "Module2_Final_Output.xlsx"
 
 
 # Whitelist of producer types per artifact. Final eligibility is always
@@ -201,6 +202,30 @@ def resolve_source_job(
 # ---------------------------------------------------------------------------
 
 
+def read_zip_member(zip_field_file, member: str, *, label: str = "archive") -> bytes:
+    """Read `member` out of an arbitrary FileField-backed ZIP.
+
+    Shared by `read_artifact_bytes` (output_zip) and input-archive reuse
+    (input_archive). Raises ValueError on any failure; the caller (a Celery
+    task) normalizes the message and marks its own job FAILED. `label` is woven
+    into error messages so the user sees "output"/"input archive" appropriately.
+    """
+    if not zip_field_file:
+        raise ValueError(f"Referenced source job has no {label}.")
+    try:
+        with zip_field_file.open("rb") as zf_stream:
+            raw = zf_stream.read()
+    except FileNotFoundError as exc:
+        raise ValueError(f"Referenced source job {label} is missing on disk.") from exc
+
+    with zipfile.ZipFile(io.BytesIO(raw), "r") as zf:
+        if member not in zf.namelist():
+            raise ValueError(
+                f"Referenced source job {label} does not contain {member}."
+            )
+        return zf.read(member)
+
+
 def read_artifact_bytes(*, source_job: Module1Job, artifact: str) -> bytes:
     """Read `artifact` out of `source_job.output_zip`.
 
@@ -215,21 +240,26 @@ def read_artifact_bytes(*, source_job: Module1Job, artifact: str) -> bytes:
         raise ValueError(
             "Referenced source job output has expired and is no longer available."
         )
-    if not source_job.output_zip:
-        raise ValueError("Referenced source job has no downloadable output.")
+    return read_zip_member(source_job.output_zip, artifact, label="output")
 
-    try:
-        with source_job.output_zip.open("rb") as zf_stream:
-            raw = zf_stream.read()
-    except FileNotFoundError as exc:
-        raise ValueError("Referenced source job output is missing on disk.") from exc
 
-    with zipfile.ZipFile(io.BytesIO(raw), "r") as zf:
-        if artifact not in zf.namelist():
-            raise ValueError(
-                f"Referenced source job output does not contain {artifact}."
-            )
-        return zf.read(artifact)
+def read_input_archive_bytes(*, source_job: Module1Job, member: str) -> bytes:
+    """Read `member` from `source_job.input_archive` (the durable input archive).
+
+    Used when a downstream job reuses another job's already-captured inputs
+    (e.g. a movement analysis chained off a process job). Applies the same
+    success/expiry guards as `read_artifact_bytes` so a failed or purged upstream
+    job reports a clear reason.
+    """
+    if source_job is None:
+        raise ValueError("Source job is missing.")
+    if source_job.status != Module1Job.Status.SUCCESS:
+        raise ValueError("Referenced source job is not successful.")
+    if source_job.output_purged_at is not None:
+        raise ValueError(
+            "Referenced source job inputs have expired and are no longer available."
+        )
+    return read_zip_member(source_job.input_archive, member, label="input archive")
 
 
 def artifact_exists_in_zip(zip_field_file, artifact: str) -> bool:

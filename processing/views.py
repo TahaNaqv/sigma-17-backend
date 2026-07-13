@@ -46,6 +46,7 @@ from .services.reserve_workbook import (
 )
 from .services.source_resolver import (
     ARTIFACT_COMBINED_SUMMARY,
+    ARTIFACT_MODULE2_FINAL,
     ARTIFACT_PRODUCERS,
     list_candidate_sources,
     read_artifact_bytes,
@@ -1463,6 +1464,7 @@ class Module2MovementJobView(APIView):
         return [IsAuthenticated(), HasPermission(["module2.run"])]
 
     def post(self, request):
+        process_job_id = (request.POST.get("process_job_id") or "").strip()
         allocate_job_id = request.POST.get("allocate_job_id")
         accounting_period = request.POST.get("accounting_period")
         selected_ulr_raw = request.POST.get("selected_ulr", "[]")
@@ -1475,15 +1477,42 @@ class Module2MovementJobView(APIView):
         previous_upr_ds_id = (request.POST.get("previous_period_upr_dataset_id") or "").strip()
         override_ds_id = (request.POST.get("movement_override_dataset_id") or "").strip()
 
-        # XOR per slot — identical contract to the process job.
+        # Reuse path: chain off a completed Cash Flow Allocation (process) job so
+        # the user doesn't re-supply Previous Period + Expense CF. The process job
+        # holds those inputs in its durable input_archive, and its own allocate
+        # ancestor supplies Combined_Summary. Any input the user *does* supply here
+        # overrides the inherited one (per slot).
+        process_job = None
+        if process_job_id:
+            process_job = resolve_source_job(
+                request=request,
+                source_job_id=process_job_id,
+                artifact=ARTIFACT_MODULE2_FINAL,
+                field_name="process_job_id",
+            )
+            if process_job.job_type != Module1Job.JobType.MODULE2_PROCESS:
+                raise ValidationError(
+                    {"process_job_id": "Must reference a Cash Flow Allocation (process) job."}
+                )
+            if not process_job.input_archive:
+                raise ValidationError({
+                    "process_job_id": (
+                        "This Cash Flow Allocation job predates input reuse — re-run it, "
+                        "or supply Previous Period and Expense CF manually."
+                    )
+                })
+        inheriting = process_job is not None
+
+        # XOR per slot. When inheriting, an omitted slot means "reuse from the
+        # process job"; otherwise one input per slot is required (original contract).
         if expense and expense_cf_ds_id:
             raise ValidationError({"detail": "Provide expense_cf or expense_cf_dataset_id, not both."})
-        if not expense and not expense_cf_ds_id:
+        if not expense and not expense_cf_ds_id and not inheriting:
             raise ValidationError({"expense_cf": "Provide expense_cf or expense_cf_dataset_id."})
         previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id)
         if previous and previous_via_dataset:
             raise ValidationError({"detail": "Provide previous_period or previous_period_{lic,upr}_dataset_id, not both."})
-        if not previous and not previous_via_dataset:
+        if not previous and not previous_via_dataset and not inheriting:
             raise ValidationError({"previous_period": "Provide previous_period file or both LIC+UPR dataset ids."})
         if previous_via_dataset and not (previous_lic_ds_id and previous_upr_ds_id):
             raise ValidationError({"detail": "Both previous_period_lic_dataset_id AND previous_period_upr_dataset_id are required for the dataset path."})
@@ -1509,22 +1538,50 @@ class Module2MovementJobView(APIView):
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 raise ValidationError({field: "Must be a JSON array."}) from exc
 
-        payload_serializer = Module2ProcessRequestSerializer(
-            data={
-                "allocate_job_id": allocate_job_id,
-                "accounting_period": accounting_period,
-                "selected_ulr": selected_ulr,
-            }
-        )
-        payload_serializer.is_valid(raise_exception=True)
-        payload = payload_serializer.validated_data
-
-        allocate_job = resolve_source_job(
-            request=request,
-            source_job_id=payload["allocate_job_id"],
-            artifact=ARTIFACT_COMBINED_SUMMARY,
-            field_name="allocate_job_id",
-        )
+        if inheriting:
+            # Inherit accounting period + ULR selection from the process job when
+            # the request omitted them; validate whatever we end up with.
+            proc_meta = process_job.input_meta or {}
+            if accounting_period in (None, ""):
+                accounting_period = proc_meta.get("accounting_period")
+            if not selected_ulr:
+                selected_ulr = proc_meta.get("selected_ulr") or []
+            payload_serializer = Module2ProcessRequestSerializer(
+                data={
+                    "allocate_job_id": str(process_job.source_job_id or ""),
+                    "accounting_period": accounting_period,
+                    "selected_ulr": selected_ulr,
+                }
+            )
+            payload_serializer.is_valid(raise_exception=True)
+            payload = payload_serializer.validated_data
+            # Combined_Summary comes from the process job's allocate ancestor.
+            if not process_job.source_job_id:
+                raise ValidationError(
+                    {"process_job_id": "Referenced process job has no allocate ancestor."}
+                )
+            allocate_job = resolve_source_job(
+                request=request,
+                source_job_id=process_job.source_job_id,
+                artifact=ARTIFACT_COMBINED_SUMMARY,
+                field_name="process_job_id",
+            )
+        else:
+            payload_serializer = Module2ProcessRequestSerializer(
+                data={
+                    "allocate_job_id": allocate_job_id,
+                    "accounting_period": accounting_period,
+                    "selected_ulr": selected_ulr,
+                }
+            )
+            payload_serializer.is_valid(raise_exception=True)
+            payload = payload_serializer.validated_data
+            allocate_job = resolve_source_job(
+                request=request,
+                source_job_id=payload["allocate_job_id"],
+                artifact=ARTIFACT_COMBINED_SUMMARY,
+                field_name="allocate_job_id",
+            )
         if allocate_job.job_type != Module1Job.JobType.MODULE2_ALLOCATE:
             raise ValidationError({"allocate_job_id": "Must reference a module2 allocate job."})
 
@@ -1561,6 +1618,10 @@ class Module2MovementJobView(APIView):
             job_type=Module1Job.JobType.MODULE2_MOVEMENT,
             input_meta={
                 "allocate_job_id": str(allocate_job.id),
+                # Present when chaining off a process job: the movement task reads
+                # Previous Period + Expense CF from its input_archive for any slot
+                # the user didn't override.
+                "process_job_id": str(process_job.id) if process_job else None,
                 "accounting_period": payload["accounting_period"],
                 "selected_ulr": payload["selected_ulr"],
                 "reporting_date": reporting_date,
