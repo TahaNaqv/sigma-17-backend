@@ -372,15 +372,21 @@ def run_module1_update_reserve_task(self, job_id: str) -> None:
     try:
         meta = job.input_meta or {}
         cdf_overrides = meta.get("cdf_overrides")
+        ldf_overrides = meta.get("ldf_overrides")
         method_overrides = meta.get("method_overrides")
 
-        # Excel-free path: when the user submitted CDF and/or Implied-LR/method
-        # overrides instead of uploaded reserve files, materialize the source
-        # Summary job's reserve workbooks into the engine's staging dir. CDF
-        # overrides are baked into the Selected CDF rows here; Implied-LR /
-        # Selected-Method overrides are applied by the engine as it appends the
-        # G–S columns (they don't exist on the source workbook yet).
-        if cdf_overrides is not None or method_overrides is not None:
+        # Excel-free path: when the user submitted LDF/CDF and/or Implied-LR/
+        # method overrides instead of uploaded reserve files, materialize the
+        # source Summary job's reserve workbooks into the engine's staging dir.
+        # LDF overrides write the Selected LDF row + the derived Selected CDF row;
+        # direct CDF overrides write the Selected CDF row; both are baked in here
+        # before the engine reads them. Implied-LR / Selected-Method overrides are
+        # applied by the engine as it appends the G–S columns.
+        if (
+            cdf_overrides is not None
+            or ldf_overrides is not None
+            or method_overrides is not None
+        ):
             if not job.source_job_id:
                 raise ValueError(
                     "Update reserve with overrides requires a source job."
@@ -388,6 +394,7 @@ def run_module1_update_reserve_task(self, job_id: str) -> None:
             write_workbooks_with_overrides(
                 source_job=job.source_job,
                 overrides_by_filename=cdf_overrides or {},
+                ldf_overrides_by_filename=ldf_overrides or {},
                 dest_folder=staging,
             )
 

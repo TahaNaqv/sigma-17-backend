@@ -918,6 +918,23 @@ class Module1UpdateReserveJobView(APIView):
                     {"cdf_overrides": "Must be a JSON object."}
                 )
 
+        # Selected-LDF overrides — the actuary edits link ratios and the engine
+        # bakes them into the Selected LDF row + the derived Selected CDF row.
+        # Keyed by workbook filename → triangle sheet → positional LDF array.
+        ldf_overrides_raw = request.POST.get("ldf_overrides")
+        ldf_overrides = None
+        if ldf_overrides_raw:
+            try:
+                ldf_overrides = json.loads(ldf_overrides_raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(
+                    {"ldf_overrides": "Invalid JSON."}
+                ) from exc
+            if not isinstance(ldf_overrides, dict):
+                raise ValidationError(
+                    {"ldf_overrides": "Must be a JSON object."}
+                )
+
         # Implied LR / Selected Method overrides — the Excel-free equivalent of
         # editing the Reserve Summary's G (Implied LR) and O (Selected Method)
         # cells. Keyed by workbook filename → accident_period →
@@ -938,7 +955,11 @@ class Module1UpdateReserveJobView(APIView):
                     {"method_overrides": "Must be a JSON object."}
                 )
 
-        has_overrides = cdf_overrides is not None or method_overrides is not None
+        has_overrides = (
+            cdf_overrides is not None
+            or method_overrides is not None
+            or ldf_overrides is not None
+        )
         if has_overrides:
             if reserve_files:
                 raise ValidationError(
@@ -998,6 +1019,8 @@ class Module1UpdateReserveJobView(APIView):
         new_meta = {"files": meta_files}
         if cdf_overrides is not None:
             new_meta["cdf_overrides"] = cdf_overrides
+        if ldf_overrides is not None:
+            new_meta["ldf_overrides"] = ldf_overrides
         if method_overrides is not None:
             new_meta["method_overrides"] = method_overrides
         job.input_meta = new_meta

@@ -7,6 +7,7 @@ from .engine import (
     run_generate_summary,
     run_policy_level_upr,
     run_update_reserve_summary,
+    selected_cdf_from_ldf,
     selected_cdf_row_to_series,
 )
 from .uw_patch import (
@@ -22,6 +23,7 @@ __all__ = [
     "run_generate_summary",
     "run_policy_level_upr",
     "run_update_reserve_summary",
+    "selected_cdf_from_ldf",
     "selected_cdf_row_to_series",
     "apply_uw_parameters_to_combined_summary",
     "build_default_payload_template_from_workbook",

@@ -616,6 +616,22 @@ def selected_cdf_row_to_series(raw_values) -> list[float]:
     return series
 
 
+def selected_cdf_from_ldf(ldf_values) -> list[float]:
+    """Derive the Selected CDF row from the Selected LDF row exactly as the Excel
+    `=PRODUCT(<thisCol>:<lastCol>)` formula does: cdf[i] = product(ldf[i:]) — the
+    reverse-cumulative (suffix) product. Blank LDF cells are treated as 1.0
+    (no development). Shared by the reserve-workbook override writer and mirrored
+    in the frontend preview so what the user sees equals what the engine reads.
+    """
+    ldf = [float(v) if v is not None else 1.0 for v in ldf_values]
+    cdf = [0.0] * len(ldf)
+    running = 1.0
+    for i in range(len(ldf) - 1, -1, -1):
+        running *= ldf[i]
+        cdf[i] = running
+    return cdf
+
+
 def cdf_for_row(series: list[float], idx: int) -> float:
     """The CDF the engine assigns to Reserve Summary row `idx` (0-based). When
     there are more summary rows than development columns, the last CDF is reused

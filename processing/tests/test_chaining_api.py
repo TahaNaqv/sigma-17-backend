@@ -329,6 +329,39 @@ class Module1ChainingTests(TestCase):
         mocked_delay.assert_called_once()
 
     @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_ldf_overrides_round_trip(self, mocked_delay):
+        source = _make_successful_source(user=self.user, org=self.org)
+        overrides = {
+            "Motor TP GROSS 2024-12.xlsx": {
+                "Paid Claims Triangle": [1.05, 1.02, 1.0],
+                "Reported Triangle": [1.1, 1.03, 1.0],
+            }
+        }
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {
+                "source_job_id": str(source.id),
+                "ldf_overrides": json.dumps(overrides),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertEqual(job.source_job_id, source.id)
+        self.assertEqual(job.input_meta["ldf_overrides"], overrides)
+        mocked_delay.assert_called_once()
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_ldf_overrides_require_source(self, mocked_delay):
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {"ldf_overrides": json.dumps({"f.xlsx": {}})},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
     def test_update_reserve_method_overrides_require_source(self, mocked_delay):
         res = self.client.post(
             "/api/module1/jobs/update-reserve/",

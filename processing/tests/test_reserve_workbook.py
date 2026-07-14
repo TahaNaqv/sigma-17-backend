@@ -107,6 +107,33 @@ def _build_reserve_workbook_with_summary(
     return buf.getvalue()
 
 
+def _build_triangle_workbook_with_ldf(*, n_cols: int = 3, ldf_cell: str = "=1") -> bytes:
+    """Reserve workbook whose triangle sheets carry a Selected LDF row (engine
+    placeholder `=1` by default) and a Selected CDF row of PRODUCT formulas —
+    the exact structure the Summary engine emits."""
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    for i, title in enumerate(("Paid Claims Triangle", "Reported Triangle")):
+        ws = wb.active if i == 0 else wb.create_sheet(title)
+        if i == 0:
+            ws.title = title
+        ws.append(["Accident Period"] + [str(c) for c in range(n_cols)])
+        ws.append(["2022"] + [0] * n_cols)
+        ldf_row = ws.max_row + 1
+        ws.append(["Selected LDF"] + [ldf_cell] * n_cols)
+        last = get_column_letter(1 + n_cols)
+        cdf_cells = ["Selected CDF"] + [
+            f"=PRODUCT({get_column_letter(2 + c)}{ldf_row}:{last}{ldf_row})"
+            for c in range(n_cols)
+        ]
+        ws.append(cdf_cells)
+    wb.create_sheet("Reserve Summary")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _zip_with(files: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -360,6 +387,108 @@ class ReserveWorkbookServiceTests(TestCase):
             # 2024Q1 keeps the default method; unknown period changed nothing.
             self.assertEqual(ws.cell(row=2, column=hdr["Selected Method"]).value, "Paid CL")
             self.assertIsNone(ws.cell(row=2, column=hdr["Implied LR"]).value)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    # ---- Selected LDF editing (derived CDF) ----
+
+    def test_selected_cdf_from_ldf_suffix_product(self):
+        from module1_engine import selected_cdf_from_ldf
+
+        # cdf[i] = product(ldf[i:])
+        self.assertEqual(
+            [round(x, 6) for x in selected_cdf_from_ldf([1.05, 1.02, 1.0])],
+            [1.071, 1.02, 1.0],
+        )
+        # blanks are treated as 1.0 (no development)
+        self.assertEqual(selected_cdf_from_ldf([2.0, None, 1.0]), [2.0, 1.0, 1.0])
+        self.assertEqual(selected_cdf_from_ldf([]), [])
+
+    def test_read_cdfs_includes_selected_ldf_placeholder(self):
+        wb = _build_triangle_workbook_with_ldf(n_cols=3)  # LDF cells = "=1"
+        job = _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": wb}),
+        )
+        payload = read_workbook_cdfs(job, "Motor TP GROSS 2024-12.xlsx")
+        paid = next(t for t in payload["triangles"] if t["sheet"] == "Paid Claims Triangle")
+        # placeholder `=1` (uncached) surfaces as 1.0, not blank
+        self.assertEqual(paid["selected_ldf"], [1.0, 1.0, 1.0])
+        self.assertIsNotNone(paid["ldf_row"])
+        # PRODUCT CDF formulas are uncached → None (unchanged behaviour)
+        self.assertEqual(paid["values"], [None, None, None])
+
+    def test_ldf_override_writes_ldf_row_and_derived_cdf(self):
+        from openpyxl import load_workbook as _load
+
+        wb = _build_triangle_workbook_with_ldf(n_cols=3)
+        job = _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": wb}),
+        )
+        dest = Path(tempfile.mkdtemp(prefix="reserve-ldf-out-"))
+        try:
+            write_workbooks_with_overrides(
+                source_job=job,
+                overrides_by_filename={},
+                ldf_overrides_by_filename={
+                    "Motor TP GROSS 2024-12.xlsx": {
+                        "Paid Claims Triangle": [1.05, 1.02, 1.0],
+                    }
+                },
+                dest_folder=dest,
+            )
+            wbc = _load(dest / "Motor TP GROSS 2024-12.xlsx", data_only=True)
+            ws = wbc["Paid Claims Triangle"]
+
+            def _row(label):
+                for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=1):
+                    if r[0].value == label:
+                        return r[0].row
+                return None
+
+            ldf_row, cdf_row = _row("Selected LDF"), _row("Selected CDF")
+            self.assertEqual([ws.cell(row=ldf_row, column=c).value for c in range(2, 5)], [1.05, 1.02, 1.0])
+            derived = [ws.cell(row=cdf_row, column=c).value for c in range(2, 5)]
+            self.assertEqual([round(x, 6) for x in derived], [1.071, 1.02, 1.0])
+        finally:
+            shutil.rmtree(dest, ignore_errors=True)
+
+    def test_ldf_override_flows_into_reserve_summary_cdf(self):
+        """End-to-end: an LDF override's derived CDF is what the engine reads for
+        the per-accident-period Paid CDF."""
+        from module1_engine import run_update_reserve_summary
+        from processing.services.reserve_workbook import read_reserve_summary_rows
+
+        # Build a workbook that also has a Reserve Summary with 1 row so the
+        # engine has something to compute; 3 dev cols → 3-length CDF series.
+        wb = _build_reserve_workbook_with_summary(
+            paid_cdf_values=[1.0, 1.0, 1.0],       # ignored once LDF override applies
+            reported_cdf_values=[1.0, 1.0, 1.0],
+            summary_rows=[["2024Q1", 1000, 300, 50, 350, 0.35]],
+        )
+        # Give it a real Selected LDF row so the override has somewhere to write.
+        job = _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": wb}),
+        )
+        staging = Path(tempfile.mkdtemp(prefix="reserve-ldf-e2e-"))
+        try:
+            write_workbooks_with_overrides(
+                source_job=job,
+                overrides_by_filename={},
+                ldf_overrides_by_filename={
+                    "Motor TP GROSS 2024-12.xlsx": {"Paid Claims Triangle": [1.05, 1.02, 1.0]},
+                },
+                dest_folder=staging,
+            )
+            run_update_reserve_summary(str(staging))
+            wbc = load_workbook(staging / "Motor TP GROSS 2024-12.xlsx", data_only=True)
+            ws = wbc["Reserve Summary"]
+            hdr = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
+            # 1 summary row (idx 0). Its Paid CDF = reversed(derived CDF)[0].
+            # derived CDF = [1.071, 1.02, 1.0]; reversed → [1.0, 1.02, 1.071]; idx0 = 1.0.
+            self.assertAlmostEqual(ws.cell(row=2, column=hdr["Paid CDF"]).value, 1.0, places=4)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
