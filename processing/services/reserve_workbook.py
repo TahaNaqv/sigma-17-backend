@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import re
 import zipfile
 from pathlib import Path
 
+from django.conf import settings
 from openpyxl import load_workbook
 
 from module1_engine import (
@@ -144,6 +146,29 @@ def _find_selected_cdf_row(ws) -> int | None:
     return _find_row_by_label(ws, SELECTED_CDF_LABEL)
 
 
+def _json_cell(v):
+    """Coerce an openpyxl cell value to something JSON-safe for the grid.
+    Blank/uncached-formula cells are None (that's why the Selected LDF/CDF rows
+    render empty in the generic preview too)."""
+    if v is None or isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        # pandas-written gaps can surface as NaN/inf — not JSON-safe.
+        return v if math.isfinite(v) else None
+    return str(v)
+
+
+def _read_grid(ws_data, max_row: int, max_col: int) -> list[list]:
+    """The whole sheet as a value grid (row 1..max_row × col 1..max_col), read
+    with `data_only` — identical to what the generic output preview shows, so the
+    triangle view is Excel-faithful (history + Simple/Weighted Avg benchmarks
+    included) without re-deriving or re-interpreting any block."""
+    return [
+        [_json_cell(ws_data.cell(row=r, column=c).value) for c in range(1, max_col + 1)]
+        for r in range(1, max_row + 1)
+    ]
+
+
 def _cell_number(ws_data, ws_formulas, row: int, col: int):
     """Read a numeric cell, preferring the cached value; fall back to a constant
     formula (the engine seeds Selected LDF cells as the placeholder `=1`, which
@@ -172,15 +197,24 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
     Returns:
       {
         "sheet": sheet_name,
-        "cdf_row": <int|null>, "ldf_row": <int|null>,
+        "cdf_row": <int|null>, "ldf_row": <int|null>,   # 1-based sheet rows
         "column_labels": [str, ...],          # headers above each value
         "values": [float|None, ...],          # current Selected CDF values
         "selected_ldf": [float|None, ...],    # current Selected LDF values (=1 → 1.0)
+        "grid": [[cell, ...], ...],           # whole sheet, 1..max_row × 1..max_col
+        "grid_truncated": bool,               # True when the cell guard tripped
       }
+
+    The `grid` carries the LDF *history* the actuary selects against — the
+    age-to-age factor block plus the Simple/Weighted Avg LDF & CDF benchmarks —
+    so the UI can show the selection in its triangle context. `ldf_row`/`cdf_row`
+    index into it (1-based), letting the client overlay the editable Selected LDF
+    row and the derived Selected CDF row in place.
     """
     empty = {
         "sheet": sheet_name, "cdf_row": None, "ldf_row": None,
         "column_labels": [], "values": [], "selected_ldf": [],
+        "grid": [], "grid_truncated": False,
     }
     if sheet_name not in wb_formulas.sheetnames:
         return empty
@@ -193,6 +227,7 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
 
     # The engine iterates columns 2..max_column inclusive (column 1 is the label).
     max_col = ws.max_column
+    max_row = ws.max_row
     column_labels: list[str] = []
     values: list[float | None] = []
     selected_ldf: list[float | None] = []
@@ -203,6 +238,11 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
         selected_ldf.append(
             _cell_number(ws_data, ws, ldf_row, col_idx) if ldf_row else None
         )
+
+    max_cells = getattr(settings, "MODULE1_OUTPUT_PREVIEW_MAX_CELLS", 20000)
+    truncated = (max_row * max_col) > max_cells
+    grid = [] if truncated else _read_grid(ws_data, max_row, max_col)
+
     return {
         "sheet": sheet_name,
         "cdf_row": cdf_row,
@@ -210,6 +250,8 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
         "column_labels": column_labels,
         "values": values,
         "selected_ldf": selected_ldf,
+        "grid": grid,
+        "grid_truncated": truncated,
     }
 
 
@@ -280,15 +322,20 @@ def read_reserve_summary_rows(
     filename: str,
     *,
     cdf_overrides: dict[str, list[float | None]] | None = None,
+    ldf_overrides: dict[str, list[float | None]] | None = None,
 ) -> dict:
     """Per-accident-period Reserve Summary rows for the Method-Selection UI.
 
     Returns the base columns (EP, Paid, OS, Reported, Reported LR) plus the
     Paid/Reported CDF the engine will assign each row — so the client can
     preview the five method ultimates and choose Implied LR / Selected Method
-    against exactly what the Update Reserve job will compute. `cdf_overrides`
-    (per-sheet Selected-CDF arrays for THIS workbook) are applied first so the
-    preview stays consistent when the user also edited CDFs.
+    against exactly what the Update Reserve job will compute.
+
+    `ldf_overrides` (per-sheet Selected-LDF arrays for THIS workbook) and
+    `cdf_overrides` (direct Selected-CDF arrays) are applied first — the same
+    write path the job uses — so the previewed Paid/Reported CDF, and therefore
+    the five ultimates, reflect the LDFs the actuary just selected in the
+    triangle view. LDF wins over CDF per sheet.
 
     Row order matches the engine's `enumerate(...)` over Reserve Summary rows,
     so `accident_period` is a safe join key back into `method_overrides`.
@@ -298,8 +345,10 @@ def read_reserve_summary_rows(
         raise ValueError(f"Workbook name '{filename}' is not parseable.")
 
     raw = read_artifact_bytes(source_job=source_job, artifact=filename)
-    if cdf_overrides:
-        raw = _apply_overrides_to_bytes(raw, cdf_overrides=cdf_overrides)
+    if cdf_overrides or ldf_overrides:
+        raw = _apply_overrides_to_bytes(
+            raw, cdf_overrides=cdf_overrides, ldf_overrides=ldf_overrides
+        )
 
     wb_formulas = load_workbook(io.BytesIO(raw), data_only=False)
     wb_data = load_workbook(io.BytesIO(raw), data_only=True)

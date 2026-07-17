@@ -1088,30 +1088,40 @@ class Module1ReserveWorkbookSummaryView(APIView):
     the five method ultimates and let the user choose Implied LR + Selected
     Method — the web equivalent of editing cells G and O in the Excel output.
 
-    Optional query param `cdf_overrides` (URL-encoded JSON, per-sheet Selected-CDF
-    arrays for this workbook) makes the CDFs reflect pending CDF edits so the
-    preview matches the eventual output.
+    Optional query params `ldf_overrides` / `cdf_overrides` (URL-encoded JSON,
+    per-sheet Selected-LDF / Selected-CDF arrays for this workbook) make the
+    returned CDFs — and therefore the five method ultimates the UI derives from
+    them — reflect the factors the actuary just selected in the triangle view,
+    so the preview matches the eventual output. LDF wins over CDF per sheet.
     """
 
     def get_permissions(self):
         return [IsAuthenticated(), HasPermission(["module1.run"])]
 
+    def _json_object_param(self, request, name):
+        raw = request.query_params.get(name)
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValidationError({name: "Invalid JSON."}) from exc
+        if not isinstance(parsed, dict):
+            raise ValidationError({name: "Must be a JSON object."})
+        return parsed
+
     def get(self, request, pk, filename):
         job = _get_accessible_job(request, pk)
         if not job.output_available:
             raise Http404()
-        cdf_overrides = None
-        raw = request.query_params.get("cdf_overrides")
-        if raw:
-            try:
-                cdf_overrides = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValidationError({"cdf_overrides": "Invalid JSON."}) from exc
-            if not isinstance(cdf_overrides, dict):
-                raise ValidationError({"cdf_overrides": "Must be a JSON object."})
+        cdf_overrides = self._json_object_param(request, "cdf_overrides")
+        ldf_overrides = self._json_object_param(request, "ldf_overrides")
         try:
             payload = read_reserve_summary_rows(
-                job, filename, cdf_overrides=cdf_overrides
+                job,
+                filename,
+                cdf_overrides=cdf_overrides,
+                ldf_overrides=ldf_overrides,
             )
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)}) from exc

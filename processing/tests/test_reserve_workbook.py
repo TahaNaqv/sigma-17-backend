@@ -492,6 +492,99 @@ class ReserveWorkbookServiceTests(TestCase):
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
+    # ---- triangle grid (LDF history context) + LDF→methods linkage ----
+
+    def test_read_cdfs_returns_full_triangle_grid_with_history(self):
+        """The grid carries the LDF history (age-to-age + benchmark rows) so the
+        UI can show the selection in its triangle context; ldf_row/cdf_row index
+        into it (1-based)."""
+        from openpyxl import Workbook as _WB
+        from openpyxl.utils import get_column_letter
+
+        # Build a triangle that mirrors the engine's block stack, including an
+        # age-to-age history block and the Simple/Weighted Avg benchmark rows.
+        wb = _WB()
+        ws = wb.active
+        ws.title = "Paid Claims Triangle"
+        ws.append(["Accident Period", "0", "1", "2"])       # row 1 header
+        ws.append(["2017-Q1", 8.15, 1.01, 1.05])            # row 2  history
+        ws.append(["2017-Q2", 1.85, 1.14, 0.0])             # row 3  history
+        ws.append(["Simple Avg LDF", 6.78, 0.54, 0.26])     # row 4  benchmark
+        ws.append(["Simple Avg CDF", 0.96, 0.14, 0.26])     # row 5  benchmark
+        ws.append(["Weighted Avg LDF", None, 4.79, 1.06])   # row 6  benchmark
+        ws.append(["Weighted Avg CDF", None, 5.36, 1.11])   # row 7  benchmark
+        ldf_row = 8
+        ws.append(["Selected LDF", "=1", "=1", "=1"])       # row 8
+        last = get_column_letter(4)
+        ws.append(["Selected CDF"] + [
+            f"=PRODUCT({get_column_letter(2 + c)}{ldf_row}:{last}{ldf_row})" for c in range(3)
+        ])                                                   # row 9
+        wb.create_sheet("Reported Triangle").append(["Accident Period", "0"])
+        wb.create_sheet("Reserve Summary")
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        job = _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": buf.getvalue()}),
+        )
+        payload = read_workbook_cdfs(job, "Motor TP GROSS 2024-12.xlsx")
+        paid = next(t for t in payload["triangles"] if t["sheet"] == "Paid Claims Triangle")
+
+        self.assertFalse(paid["grid_truncated"])
+        grid = paid["grid"]
+        self.assertEqual(len(grid), 9)          # rows 1..9
+        self.assertEqual(len(grid[0]), 4)       # cols A..D
+        # The LDF history is present, exactly as Excel holds it.
+        self.assertEqual(grid[1][0], "2017-Q1")
+        self.assertEqual(grid[1][1], 8.15)
+        # The benchmark rows the actuary selects against are present.
+        self.assertEqual(grid[3][0], "Simple Avg LDF")
+        self.assertEqual(grid[5][0], "Weighted Avg LDF")
+        # ldf_row / cdf_row are 1-based indices into the grid.
+        self.assertEqual(paid["ldf_row"], 8)
+        self.assertEqual(paid["cdf_row"], 9)
+        self.assertEqual(grid[paid["ldf_row"] - 1][0], "Selected LDF")
+        self.assertEqual(grid[paid["cdf_row"] - 1][0], "Selected CDF")
+        # Formula rows are blank in the grid (data_only) — same as the generic
+        # preview — but selected_ldf resolves the `=1` placeholder.
+        self.assertIsNone(grid[paid["ldf_row"] - 1][1])
+        self.assertEqual(paid["selected_ldf"], [1.0, 1.0, 1.0])
+
+    def test_grid_truncated_when_over_cell_guard(self):
+        from django.test import override_settings as _override
+
+        wb = _build_triangle_workbook_with_ldf(n_cols=3)
+        job = _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": wb}),
+        )
+        with _override(MODULE1_OUTPUT_PREVIEW_MAX_CELLS=1):
+            payload = read_workbook_cdfs(job, "Motor TP GROSS 2024-12.xlsx")
+        paid = next(t for t in payload["triangles"] if t["sheet"] == "Paid Claims Triangle")
+        self.assertTrue(paid["grid_truncated"])
+        self.assertEqual(paid["grid"], [])
+        # The editable rows still work even when the grid is withheld.
+        self.assertEqual(paid["selected_ldf"], [1.0, 1.0, 1.0])
+
+    def test_reserve_summary_rows_reflect_ldf_overrides(self):
+        """The Select Methods tab's CDFs (→ ultimates) follow the LDFs selected
+        in the triangle view."""
+        from module1_engine import selected_cdf_from_ldf
+
+        job = self._summary_job()  # paid cdf [1.1, 1.5] → reversed [1.5, 1.1]
+        payload = read_reserve_summary_rows(
+            job, "Motor TP GROSS 2024-12.xlsx",
+            ldf_overrides={"Paid Claims Triangle": [2.0, 1.5]},
+        )
+        # derived CDF = suffix product = [3.0, 1.5]; engine reverses → [1.5, 3.0]
+        self.assertEqual(selected_cdf_from_ldf([2.0, 1.5]), [3.0, 1.5])
+        rows = payload["rows"]
+        self.assertEqual(rows[0]["paid_cdf"], 1.5)
+        self.assertEqual(rows[1]["paid_cdf"], 3.0)
+        # Reported side untouched by a Paid-only LDF override.
+        self.assertEqual(rows[0]["reported_cdf"], 1.6)
+
     def test_unreferenced_workbooks_are_copied_verbatim(self):
         wb = _build_reserve_workbook(
             paid_cdf_values=[2.0, 1.5],
