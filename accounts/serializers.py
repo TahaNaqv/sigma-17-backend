@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.utils.crypto import get_random_string
 from rest_framework import serializers
 
 from tenants.models import Membership
@@ -127,7 +128,7 @@ class UserCreateUpdateSerializer(serializers.Serializer):
         user = User.objects.create_user(
             username=email,
             email=email,
-            password=password or User.objects.make_random_password(),
+            password=password or get_random_string(16),
             first_name=first_name,
             last_name=last_name,
             is_active=(status == "active"),
