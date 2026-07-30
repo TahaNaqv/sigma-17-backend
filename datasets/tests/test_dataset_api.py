@@ -178,7 +178,7 @@ class DatasetCrudTests(TestCase):
             format="json",
         )
         self.assertEqual(r2.status_code, 400)
-        self.assertIn("name", r2.data)
+        self.assertIn("name", r2.data["fieldErrors"])
 
     def test_list_filters_by_kind(self):
         Dataset.objects.create(
@@ -326,7 +326,7 @@ class RowFlowsTests(TestCase):
         )
         # Even one bad row should reject the whole batch (atomic).
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("rows", resp.data)
+        self.assertIn("rows", resp.data["fieldErrors"])
         self.assertEqual(PremiumRow.objects.filter(dataset=self.ds).count(), 0)
 
     def test_bulk_insert_succeeds_and_assigns_sequential_indexes(self):

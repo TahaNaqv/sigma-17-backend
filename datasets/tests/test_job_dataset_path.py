@@ -233,7 +233,7 @@ class SummaryDatasetSubmissionTests(TestCase):
             format="multipart",
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("premium", resp.data)
+        self.assertIn("premium", resp.data["fieldErrors"])
 
     @patch("processing.views.run_module1_summary_task.delay")
     def test_summary_rejects_dataset_from_other_org(self, _mocked):
@@ -258,7 +258,7 @@ class SummaryDatasetSubmissionTests(TestCase):
             format="multipart",
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("premium_dataset_ids", resp.data)
+        self.assertIn("premium_dataset_ids", resp.data["fieldErrors"])
 
     @patch("processing.views.run_module1_summary_task.delay")
     def test_summary_rejects_wrong_kind_for_field(self, _mocked):
@@ -278,7 +278,7 @@ class SummaryDatasetSubmissionTests(TestCase):
             format="multipart",
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("premium_dataset_ids", resp.data)
+        self.assertIn("premium_dataset_ids", resp.data["fieldErrors"])
 
 
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)

@@ -263,7 +263,7 @@ class ExcelImportEndpointTests(TestCase):
             format="multipart",
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("file", resp.data)
+        self.assertIn("file", resp.data["fieldErrors"])
 
     def test_endpoint_rejects_missing_required_column(self):
         wb = Workbook()

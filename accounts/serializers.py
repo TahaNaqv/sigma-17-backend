@@ -108,6 +108,24 @@ class UserCreateUpdateSerializer(serializers.Serializer):
     def _get_org(self):
         return (self.context or {}).get("organization")
 
+    def validate_email(self, value):
+        """Reject duplicates here so the client gets a field error, not a 409.
+
+        Email doubles as username, which is unique at the DB level; without
+        this check the insert fails with an IntegrityError.
+        """
+        email = value.strip()
+        clash = User.objects.filter(email__iexact=email) | User.objects.filter(
+            username__iexact=email
+        )
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError(
+                "A user with this email already exists."
+            )
+        return email
+
     @transaction.atomic
     def create(self, validated_data):
         org = self._get_org()

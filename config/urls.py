@@ -39,3 +39,7 @@ urlpatterns = [
     path('api/auth/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
+
+# Requests that never reach a DRF view still answer with JSON, not an HTML page.
+handler404 = 'core.exceptions.json_404'
+handler500 = 'core.exceptions.json_500'
