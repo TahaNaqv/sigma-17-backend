@@ -1,0 +1,1937 @@
+{
+ "_meta": {
+  "purpose": "Verbatim extraction of the client's four note sheets (Gross_Note, RI_Note, IS, BS) — a pure re-presentation of the Gross/RI movement sheets. Faithful to the client file INCLUDING its defects; corrections live in the curated deviation layer of notes_schema.py. Do not hand-edit; regenerate via scripts/extract_client_disclosure.py --write.",
+  "source_file": "sigma-17-desktop-app/Output Module 2/Module2_Final_Output.xlsx (sheets Gross_Note, RI_Note, IS, BS)",
+  "source_sha256": "1de8f8f0f4e066cae0e96f80fe7279a587571bfc2d595791b2817f070438e3f0",
+  "movement_columns": {
+   "Gross": {
+    "C": "LRC_excl_LC",
+    "E": "Loss_Component",
+    "G": "LIC_excl_RA",
+    "I": "Risk_Adjustment",
+    "J": "Total"
+   },
+   "RI": {
+    "D": "Assets_Remaining_Coverage",
+    "F": "Loss_Recovery_Component",
+    "H": "Amounts_Recoverable_IC",
+    "J": "Risk_Adjustment",
+    "K": "Total"
+   }
+  }
+ },
+ "sheets": {
+  "Gross_Note": {
+   "title": "12.2.1.1 Insurance contracts",
+   "columns": [
+    "LRC_excl_LC",
+    "Loss_Component",
+    "LIC_excl_RA",
+    "Risk_Adjustment",
+    "Total"
+   ],
+   "source_sheet": "Gross",
+   "lines": [
+    {
+     "row": 8,
+     "id": "insurance_contracts",
+     "label": "Insurance contracts",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 9,
+     "id": "insurance_contract_liabilities_opening",
+     "label": "Insurance contract liabilities – opening",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LRC_excl_LC",
+         "row": 6
+        }
+       ]
+      },
+      "Loss_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Loss_Component",
+         "row": 6
+        }
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 6
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 6
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 10,
+     "id": "insurance_contract_assets_opening",
+     "label": "Insurance contract assets – opening",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 11,
+     "id": "opening_balance_net",
+     "label": "Opening balance – net",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Loss_Component": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      }
+     }
+    },
+    {
+     "row": 13,
+     "id": "insurance_revenue",
+     "label": "Insurance revenue",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LRC_excl_LC",
+         "row": 26
+        }
+       ]
+      },
+      "Loss_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Loss_Component",
+         "row": 26
+        }
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 26
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 26
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 15,
+     "id": "insurance_service_expenses",
+     "label": "Insurance service expenses",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 16,
+     "id": "incurred_claims_and_other_directly_attributable_expenses",
+     "label": "Incurred claims and other directly attributable expenses",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 32
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 32
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 17,
+     "id": "onerous_contracts_recognized_reversal_of_onerous_contracts",
+     "label": "Onerous contracts recognized/Reversal of Onerous Contracts",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Loss_Component",
+         "row": 31
+        }
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 18,
+     "id": "changes_that_relate_to_past_service_adjustments_to_the_lic",
+     "label": "Changes that relate to past service - adjustments to the LIC",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 45
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 45
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 19,
+     "id": "insurance_acquisition_cashflows_amortisation",
+     "label": "Insurance acquisition cashflows amortisation",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LRC_excl_LC",
+         "row": 38
+        }
+       ]
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 20,
+     "id": "insurance_service_expenses_2",
+     "label": "Insurance service expenses",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18,
+        19
+       ]
+      },
+      "Loss_Component": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18,
+        19
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18,
+        19
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18,
+        19
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18,
+        19
+       ]
+      }
+     }
+    },
+    {
+     "row": 21,
+     "id": "finance_expense_from_insurance_contracts",
+     "label": "Finance expense from insurance contracts",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LRC_excl_LC",
+         "row": 57
+        }
+       ]
+      },
+      "Loss_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Loss_Component",
+         "row": 57
+        }
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 57
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 57
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 22,
+     "id": "total_changes_in_the_statement_of_income",
+     "label": "Total changes in the statement of income",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "sum",
+       "rows": [
+        13,
+        20,
+        21
+       ]
+      },
+      "Loss_Component": {
+       "kind": "sum",
+       "rows": [
+        13,
+        20,
+        21
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "sum",
+       "rows": [
+        13,
+        20,
+        21
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        13,
+        20,
+        21
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        13,
+        20,
+        21
+       ]
+      }
+     }
+    },
+    {
+     "row": 24,
+     "id": "cashflows",
+     "label": "Cashflows",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 25,
+     "id": "premiums_received",
+     "label": "Premiums received",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LRC_excl_LC",
+         "row": 66
+        }
+       ]
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 26,
+     "id": "claims_and_other_directly_attributable_expenses_paid",
+     "label": "Claims and other directly attributable expenses paid",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 67
+        },
+        {
+         "sheet": "Gross",
+         "bucket": "LIC_excl_RA",
+         "row": 67
+        }
+       ],
+       "literal_text": "Gross!G67+Gross!G67"
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 67
+        },
+        {
+         "sheet": "Gross",
+         "bucket": "Risk_Adjustment",
+         "row": 67
+        }
+       ],
+       "literal_text": "Gross!I67+Gross!I67"
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 27,
+     "id": "insurance_acquisition_cashflows_paid",
+     "label": "Insurance acquisition cashflows paid",
+     "kind": "input",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "LRC_excl_LC",
+         "row": 69
+        }
+       ]
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "LRC_excl_LC",
+        "Loss_Component",
+        "LIC_excl_RA",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 28,
+     "id": "total_cash_inflows_outflows",
+     "label": "Total cash inflows (outflows)",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26,
+        27
+       ]
+      },
+      "Loss_Component": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26,
+        27
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26,
+        27
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26,
+        27
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26,
+        27
+       ]
+      }
+     }
+    },
+    {
+     "row": 30,
+     "id": "insurance_contracts_2",
+     "label": "Insurance contracts",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 31,
+     "id": "insurance_contract_liabilities_closing",
+     "label": "Insurance contract liabilities – closing",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        28
+       ]
+      },
+      "Loss_Component": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        28
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        28
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        28
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        28
+       ]
+      }
+     }
+    },
+    {
+     "row": 32,
+     "id": "insurance_contract_assets_closing",
+     "label": "Insurance contract assets – closing",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "LIC_excl_RA": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        12,
+        23,
+        29
+       ]
+      }
+     }
+    },
+    {
+     "row": 33,
+     "id": "closing_balance_net",
+     "label": "Closing balance – net",
+     "kind": "subtotal",
+     "sources": {
+      "LRC_excl_LC": {
+       "kind": "sum",
+       "rows": [
+        31,
+        32
+       ]
+      },
+      "Loss_Component": {
+       "kind": "sum",
+       "rows": [
+        31,
+        32
+       ]
+      },
+      "LIC_excl_RA": {
+       "kind": "sum",
+       "rows": [
+        31,
+        32
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        31,
+        32
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        31,
+        32
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "RI_Note": {
+   "title": "12.2.2.1 Reinsurance contracts",
+   "columns": [
+    "Assets_Remaining_Coverage",
+    "Loss_Recovery_Component",
+    "Amounts_Recoverable_IC",
+    "Risk_Adjustment",
+    "Total"
+   ],
+   "source_sheet": "RI",
+   "lines": [
+    {
+     "row": 8,
+     "id": "reinsurance_contracts",
+     "label": "Reinsurance contracts",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 9,
+     "id": "reinsurance_contract_assets_opening",
+     "label": "Reinsurance contract assets – opening",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Assets_Remaining_Coverage",
+         "row": 4
+        }
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Loss_Recovery_Component",
+         "row": 4
+        }
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Amounts_Recoverable_IC",
+         "row": 4
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Risk_Adjustment",
+         "row": 4
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 10,
+     "id": "reinsurance_contract_liabilities_opening",
+     "label": "Reinsurance contract liabilities – opening",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "dash"
+      },
+      "Loss_Recovery_Component": {
+       "kind": "dash"
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "dash"
+      },
+      "Risk_Adjustment": {
+       "kind": "dash"
+      },
+      "Total": {
+       "kind": "dash"
+      }
+     }
+    },
+    {
+     "row": 11,
+     "id": "opening_balance_net",
+     "label": "Opening balance – net",
+     "kind": "subtotal",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        9,
+        10
+       ]
+      }
+     }
+    },
+    {
+     "row": 13,
+     "id": "allocation_of_reinsurance_premium",
+     "label": "Allocation of reinsurance premium",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Assets_Remaining_Coverage",
+         "row": 21
+        }
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Loss_Recovery_Component",
+         "row": 21
+        }
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Amounts_Recoverable_IC",
+         "row": 21
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Risk_Adjustment",
+         "row": 21
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 15,
+     "id": "amounts_recoverable_from_reinsurers",
+     "label": "Amounts recoverable from reinsurers",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 16,
+     "id": "claims_recovered_and_other_directly_attributable_expenses",
+     "label": "Claims recovered and other directly attributable expenses",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Recovery_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Amounts_Recoverable_IC",
+         "row": 28
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Risk_Adjustment",
+         "row": 28
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 17,
+     "id": "loss_recovery_on_onerous_underlying_contracts",
+     "label": "Loss-recovery on onerous underlying contracts",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Recovery_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Loss_Recovery_Component",
+         "row": 27
+        }
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 18,
+     "id": "changes_that_relate_to_past_service_changes_in_the_fcf_relating_to_incurred_claims_recovery",
+     "label": "Changes that relate to past service – changes in the FCF relating to incurred claims recovery",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Recovery_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Amounts_Recoverable_IC",
+         "row": 38
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Risk_Adjustment",
+         "row": 38
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 19,
+     "id": "amounts_recoverable_from_reinsurers_net",
+     "label": "Amounts recoverable from reinsurers  - net",
+     "kind": "subtotal",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        16,
+        17,
+        18
+       ]
+      }
+     }
+    },
+    {
+     "row": 21,
+     "id": "finance_expenses_from_reinsurance_contracts",
+     "label": "Finance expenses from reinsurance contracts",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Assets_Remaining_Coverage",
+         "row": 48
+        }
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Loss_Recovery_Component",
+         "row": 48
+        }
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Amounts_Recoverable_IC",
+         "row": 48
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Risk_Adjustment",
+         "row": 48
+        }
+       ]
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 22,
+     "id": "total_changes_in_the_statement_of_income",
+     "label": "Total changes in the statement of income",
+     "kind": "subtotal",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "sum",
+       "rows": [
+        13,
+        19,
+        21
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "sum",
+       "rows": [
+        13,
+        19,
+        21
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "sum",
+       "rows": [
+        13,
+        19,
+        21
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        13,
+        19,
+        21
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        13,
+        19,
+        21
+       ]
+      }
+     }
+    },
+    {
+     "row": 24,
+     "id": "cashflows",
+     "label": "Cashflows",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 25,
+     "id": "premiums_ceded_and_acquisition_cashflows_paid",
+     "label": "Premiums ceded and acquisition cashflows paid",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Assets_Remaining_Coverage",
+         "row": 57
+        },
+        {
+         "sheet": "RI",
+         "bucket": "Assets_Remaining_Coverage",
+         "row": 59
+        }
+       ],
+       "literal_text": "RI!D57+RI!D59"
+      },
+      "Loss_Recovery_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 26,
+     "id": "recoveries_from_reinsurance",
+     "label": "Recoveries from reinsurance",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Loss_Recovery_Component": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Amounts_Recoverable_IC",
+         "row": 58
+        }
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "const",
+       "value": 0.0
+      },
+      "Total": {
+       "kind": "row_total",
+       "columns": [
+        "Assets_Remaining_Coverage",
+        "Loss_Recovery_Component",
+        "Amounts_Recoverable_IC",
+        "Risk_Adjustment"
+       ]
+      }
+     }
+    },
+    {
+     "row": 27,
+     "id": "total_cash_inflows_outflows",
+     "label": "Total cash inflows (outflows)",
+     "kind": "subtotal",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        25,
+        26
+       ]
+      }
+     }
+    },
+    {
+     "row": 29,
+     "id": "reinsurance_contracts_2",
+     "label": "Reinsurance contracts",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 30,
+     "id": "reinsurance_contract_assets_closing",
+     "label": "Reinsurance contract assets – closing",
+     "kind": "subtotal",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        27
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        27
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        27
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        27
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        11,
+        22,
+        27
+       ]
+      }
+     }
+    },
+    {
+     "row": 31,
+     "id": "reinsurance_contract_liabilities_closing",
+     "label": "Reinsurance contract liabilities – closing",
+     "kind": "input",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "dash"
+      },
+      "Loss_Recovery_Component": {
+       "kind": "dash"
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "dash"
+      },
+      "Risk_Adjustment": {
+       "kind": "dash"
+      },
+      "Total": {
+       "kind": "dash"
+      }
+     }
+    },
+    {
+     "row": 32,
+     "id": "closing_balance_net",
+     "label": "Closing balance – net",
+     "kind": "subtotal",
+     "sources": {
+      "Assets_Remaining_Coverage": {
+       "kind": "sum",
+       "rows": [
+        30,
+        31
+       ]
+      },
+      "Loss_Recovery_Component": {
+       "kind": "sum",
+       "rows": [
+        30,
+        31
+       ]
+      },
+      "Amounts_Recoverable_IC": {
+       "kind": "sum",
+       "rows": [
+        30,
+        31
+       ]
+      },
+      "Risk_Adjustment": {
+       "kind": "sum",
+       "rows": [
+        30,
+        31
+       ]
+      },
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        30,
+        31
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "IS": {
+   "title": "Income Statement",
+   "columns": [
+    "Total"
+   ],
+   "source_sheet": null,
+   "lines": [
+    {
+     "row": 5,
+     "id": "insurance_revenue",
+     "label": "Insurance revenue",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "note",
+       "ref": {
+        "note": "Gross_Note",
+        "column": "Total",
+        "row": 13
+       }
+      }
+     }
+    },
+    {
+     "row": 6,
+     "id": "insurance_service_expenses",
+     "label": "Insurance service expenses",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "note",
+       "ref": {
+        "note": "Gross_Note",
+        "column": "Total",
+        "row": 20
+       }
+      }
+     }
+    },
+    {
+     "row": 7,
+     "id": "net_expenses_from_reinsurance_contracts",
+     "label": "Net expenses from reinsurance contracts",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "note",
+       "ref": {
+        "note": "RI_Note",
+        "column": "Total",
+        "row": 22
+       }
+      }
+     }
+    },
+    {
+     "row": 8,
+     "id": "insurance_service_result",
+     "label": "Insurance service result",
+     "kind": "subtotal",
+     "sources": {
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        5,
+        6,
+        7
+       ]
+      }
+     }
+    },
+    {
+     "row": 10,
+     "id": "interest_income",
+     "label": "Interest income",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "const",
+       "value": 0.0
+      }
+     }
+    },
+    {
+     "row": 11,
+     "id": "expected_credit_loss_on_financial_assets",
+     "label": "Expected credit loss on financial assets",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 12,
+     "id": "net_losses_on_financial_assets_measured_at_fvtpl",
+     "label": "Net losses on financial assets measured at FVTPL",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "const",
+       "value": 0.0
+      }
+     }
+    },
+    {
+     "row": 13,
+     "id": "net_investment_loss",
+     "label": "Net investment loss",
+     "kind": "subtotal",
+     "sources": {
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        10,
+        11,
+        12
+       ]
+      }
+     }
+    },
+    {
+     "row": 14,
+     "id": "net_finance_expenses_from_insurance_contracts",
+     "label": "Net finance expenses from insurance contracts",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "Gross",
+         "bucket": "Total",
+         "row": 57
+        }
+       ]
+      }
+     }
+    },
+    {
+     "row": 15,
+     "id": "net_finance_income_from_reinsurance_contracts",
+     "label": "Net finance income from reinsurance contracts",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "movement",
+       "terms": [
+        {
+         "sheet": "RI",
+         "bucket": "Total",
+         "row": 48
+        }
+       ]
+      }
+     }
+    },
+    {
+     "row": 16,
+     "id": "other_items",
+     "label": "Other Items",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "const",
+       "value": 0.0
+      }
+     }
+    },
+    {
+     "row": 17,
+     "id": "net_insurance_and_investment_result",
+     "label": "Net insurance and investment result",
+     "kind": "subtotal",
+     "sources": {
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        14,
+        15,
+        16,
+        10,
+        11,
+        12,
+        8
+       ]
+      }
+     }
+    },
+    {
+     "row": 19,
+     "id": "other_operating_expenses",
+     "label": "Other operating expenses",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "const",
+       "value": 0.0
+      }
+     }
+    },
+    {
+     "row": 20,
+     "id": "ifrs9_adjustments",
+     "label": "IFRS9 Adjustments",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 21,
+     "id": "other_income",
+     "label": "Other income",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "const",
+       "value": 0.0
+      }
+     }
+    },
+    {
+     "row": 22,
+     "id": "total_loss_for_the_year_attributable_to_the_shareholders_before_zakat_and_income_tax",
+     "label": "Total loss for the year attributable to the shareholders before zakat and income tax",
+     "kind": "subtotal",
+     "sources": {
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        17,
+        19,
+        21
+       ]
+      }
+     }
+    },
+    {
+     "row": 24,
+     "id": "zakat_expense",
+     "label": "Zakat expense",
+     "kind": "section",
+     "sources": {}
+    },
+    {
+     "row": 25,
+     "id": "income_tax",
+     "label": "Income tax",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "dash"
+      }
+     }
+    },
+    {
+     "row": 27,
+     "id": "net_loss_for_the_year_attributable_to_the_shareholders",
+     "label": "NET LOSS FOR THE YEAR ATTRIBUTABLE TO THE SHAREHOLDERS",
+     "kind": "subtotal",
+     "sources": {
+      "Total": {
+       "kind": "sum",
+       "rows": [
+        22,
+        24
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "BS": {
+   "title": "Balance Sheet",
+   "columns": [
+    "Total"
+   ],
+   "source_sheet": null,
+   "lines": [
+    {
+     "row": 4,
+     "id": "insurance_contract_liabilities",
+     "label": "Insurance contract liabilities",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "note",
+       "ref": {
+        "note": "Gross_Note",
+        "column": "Total",
+        "row": 33
+       }
+      }
+     }
+    },
+    {
+     "row": 5,
+     "id": "reinsurance_contract_assets",
+     "label": "Reinsurance contract assets",
+     "kind": "input",
+     "sources": {
+      "Total": {
+       "kind": "note",
+       "ref": {
+        "note": "RI_Note",
+        "column": "Total",
+        "row": 32
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

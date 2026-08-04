@@ -9,7 +9,9 @@ source expressions live in mapping_source.json (sign-off, plan gate #1).
 Roll-forward structure (faithful to the template):
     opening[b]               = Σ build-up lines @ _prev
     closing_independent[b]   = Σ build-up lines @ _curr        (EOP balances)
-    closing_rollforward[b]   = opening[b] + Σ P&L[b] − Σ cashflow[b]
+    closing_rollforward[b]   = opening[b] + Δbalance[b] ± Σ cashflow[b]  (+ Gross, − RI)
+    Δbalance                 = Σ P&L lines, with the revenue / ceded-allocation block
+                               NEGATED (it reduces the balance, not raises it)
     residual[b]              = closing_independent[b] − closing_rollforward[b]
 The residual is routed into the "Other methodology diff" line (plan § recon): it is
 a reported quality signal, not a hard gate — manual lines (~⅓) default to 0 until the
@@ -20,13 +22,20 @@ Pure pandas/stdlib; no Django.
 
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass, field
 
 import pandas as pd
 
 from .mapping import TIER_OVERRIDE, _load as _load_mapping
-from .schema import SCHEMA, Sheet
+from .schema import (
+    CLOSING_CASHFLOW_SIGN,
+    RECONSTRUCTED_FORMULAS,
+    SCHEMA,
+    Sheet,
+    negated_rollforward_rows,
+)
 
 # ── safe expression resolver ────────────────────────────────────────────────
 # Mapping sources reference columns whose names contain spaces, dashes and
@@ -279,12 +288,17 @@ def _build_sheet(sheet: Sheet, row: dict, columns: set[str], mapping, result: Mo
             opening[b] += ov[b]
             closing_indep[b] += cv[b]
 
+    # The revenue / ceded-allocation block is presented with a P&L sign but *reduces* the
+    # balance, so it enters the roll-forward negated. The line values themselves keep the
+    # sheet's own sign — only the balance movement flips (schema.ROLLFORWARD_NEGATED_BLOCK).
+    negated = negated_rollforward_rows(sheet.name)
     pnl_total = {b: 0.0 for b in vbuckets}
     for ln in pnl:
         v = resolve_line(ln, "curr")
         line_values[ln.id] = v
+        direction = -1.0 if ln.row in negated else 1.0
         for b in vbuckets:
-            pnl_total[b] += v[b]
+            pnl_total[b] += direction * v[b]
 
     cf_total = {b: 0.0 for b in vbuckets}
     for ln in cashflow:
@@ -293,7 +307,10 @@ def _build_sheet(sheet: Sheet, row: dict, columns: set[str], mapping, result: Mo
         for b in vbuckets:
             cf_total[b] += v[b]
 
-    closing_rf = {b: opening[b] + pnl_total[b] - cf_total[b] for b in vbuckets}
+    # Cash flows enter the roll-forward with the sheet's own direction: Gross adds the
+    # signed total (a liability), RI subtracts it (an asset). See schema.CLOSING_CASHFLOW_SIGN.
+    cf_sign = CLOSING_CASHFLOW_SIGN.get(sheet.name, -1.0)
+    closing_rf = {b: opening[b] + pnl_total[b] + cf_sign * cf_total[b] for b in vbuckets}
     residual = {b: closing_indep[b] - closing_rf[b] for b in vbuckets}
     return SheetResult(
         sheet=sheet.name,
@@ -311,6 +328,105 @@ def _num(v) -> float:
     except (TypeError, ValueError):
         return 0.0
     return f if f == f and f not in (float("inf"), float("-inf")) else 0.0
+
+
+# ── resolved row values (subtotal evaluation) ───────────────────────────────
+# Every aggregate row of a disclosure sheet is defined by an Excel formula over other
+# rows — either extracted from the client's file or reconstructed in
+# ``schema.RECONSTRUCTED_FORMULAS``. Resolving them lives here rather than in the
+# renderer: the note layer needs the same numbers, and both must agree by construction.
+
+
+def _formula_for_row(sheet: Sheet) -> dict[int, str]:
+    """row -> Excel formula string for every non-input aggregate line."""
+    out: dict[int, str] = {}
+    for ln in sheet.lines:
+        if ln.formulas:
+            # any bucket's excel works — they reference the same rows, different columns
+            out[ln.row] = next(iter(ln.formulas.values()))["excel"]
+    # Rows the client flattened to statics: formulas reconstructed and verified in schema.py.
+    out.update(RECONSTRUCTED_FORMULAS.get(sheet.name, {}))
+    return out
+
+
+def _to_arith(excel: str) -> str:
+    """Excel subtotal formula -> pure arithmetic over row numbers.
+    Expands ``X7:X25`` ranges, drops ``SUM``/column letters; every integer is a row ref."""
+    expr = excel.lstrip("=")
+    expr = re.sub(
+        r"[A-Z]{1,3}(\d+):[A-Z]{1,3}(\d+)",
+        lambda m: "(" + "+".join(str(r) for r in range(int(m.group(1)), int(m.group(2)) + 1)) + ")",
+        expr,
+    )
+    expr = expr.replace("SUM", "")
+    return re.sub(r"[A-Z]{1,3}(\d+)", r"\1", expr)
+
+
+def _eval_rows(arith: str, bucket: str, value_of) -> float:
+    """Safely evaluate the row-arithmetic (only +, -, *, parens; integers are row refs)."""
+    def ev(node):
+        if isinstance(node, ast.Expression):
+            return ev(node.body)
+        if isinstance(node, ast.BinOp):
+            lhs, rhs = ev(node.left), ev(node.right)
+            if isinstance(node.op, ast.Add):
+                return lhs + rhs
+            if isinstance(node.op, ast.Sub):
+                return lhs - rhs
+            if isinstance(node.op, ast.Mult):
+                return lhs * rhs
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return -ev(node.operand)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return value_of(int(node.value), bucket)
+        raise ValueError(f"unsupported subtotal expression node: {ast.dump(node)}")
+
+    return ev(ast.parse(arith, mode="eval"))
+
+
+def row_values(sheet: Sheet, sres: SheetResult) -> dict[int, dict[str, float]]:
+    """Resolve every value line to its per-bucket amount: inputs from ``line_values``,
+    aggregates by evaluating their formula (recursively, memoized)."""
+    by_row = {ln.row: ln for ln in sheet.lines}
+    formulas = _formula_for_row(sheet)
+    vbuckets = list(sheet.value_buckets)
+    memo: dict[tuple[int, str], float] = {}
+
+    def value_of(row: int, bucket: str) -> float:
+        key = (row, bucket)
+        if key in memo:
+            return memo[key]
+        memo[key] = 0.0  # cycle guard
+        ln = by_row.get(row)
+        if ln is None:
+            return 0.0
+        if ln.kind == "input":
+            v = _num(sres.line_values.get(ln.id, {}).get(bucket, 0.0))
+        elif row in formulas:
+            v = _eval_rows(_to_arith(formulas[row]), bucket, value_of)
+        elif ln.kind == "opening":
+            v = _num(sres.opening.get(bucket, 0.0))
+        else:
+            v = 0.0
+        memo[key] = v
+        return v
+
+    return {ln.row: {b: value_of(ln.row, b) for b in vbuckets}
+            for ln in sheet.lines if ln.kind != "section"}
+
+
+def line_totals(sheet: Sheet, sres: SheetResult) -> dict[str, dict[str, float]]:
+    """``line id -> {bucket: value, "Total": Σ buckets}``. The note layer addresses
+    movement lines by id, never by row — ids are stable across template revisions."""
+    vals = row_values(sheet, sres)
+    out: dict[str, dict[str, float]] = {}
+    for ln in sheet.lines:
+        if ln.row not in vals:
+            continue
+        buckets = dict(vals[ln.row])
+        buckets["Total"] = sum(buckets.values())
+        out[ln.id] = buckets
+    return out
 
 
 def sum_sheet_results(items: list[SheetResult]) -> SheetResult:

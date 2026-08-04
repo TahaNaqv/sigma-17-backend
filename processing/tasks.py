@@ -15,6 +15,7 @@ from module1_engine import (
     run_update_reserve_summary,
 )
 from module2_engine import (
+    notes_report,
     reconciliation_report,
     run_module2_allocate,
     run_module2_movement,
@@ -664,6 +665,10 @@ def run_module2_movement_task(self, job_id: str) -> None:
                 "tolerance": recon["tolerance"],
                 "top_breaches": recon["top_breaches"],
             },
+            # Note-disclosure controls: the notes restate the movement sheets, so they
+            # must agree with them. Additive key — consumers must treat it as optional,
+            # since every job produced before this shipped lacks it.
+            "notes": notes_report(result),
         }
         job.input_meta = meta
         job.save(update_fields=["input_meta"])

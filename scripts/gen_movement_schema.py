@@ -15,7 +15,7 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
-from module2_engine.movement.schema import SCHEMA  # noqa: E402
+from module2_engine.movement.schema import SCHEMA, SCHEMA_VERSION  # noqa: E402
 
 OUT = BACKEND.parent / "sigma-17-dashboard" / "src" / "features" / "movement" / "schema.ts"
 
@@ -44,7 +44,7 @@ def to_ts() -> str:
 // Source of truth: module2_engine/movement/schema_source.json (+ schema.py overrides).
 // Regenerate after any schema change; CI fails on drift.
 
-export const MOVEMENT_SCHEMA_VERSION = "{SCHEMA.version}";
+export const MOVEMENT_SCHEMA_VERSION = "{SCHEMA_VERSION}";
 
 export type MovementLineKind =
   | "opening"

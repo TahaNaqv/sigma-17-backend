@@ -2,7 +2,7 @@
  "_meta": {
   "purpose": "Verbatim per-(line,bucket) source extraction from the CLIENT disclosure file. Authoritative sign-off input for the movement mapping. Do not hand-edit; regenerate via scripts/extract_client_disclosure.py.",
   "source_file": "sigma-17-desktop-app/Output Module 2/Module2_Final_Output.xlsx (sheets Gross, RI)",
-  "source_sha256": "16f9656004fd77ae94348b8cac4b65a3c33d1817e7c735b06bffbf9fd43a96f5",
+  "source_sha256": "1de8f8f0f4e066cae0e96f80fe7279a587571bfc2d595791b2817f070438e3f0",
   "extracted_bucket_columns": {
    "Gross": [
     "LRC_excl_LC",

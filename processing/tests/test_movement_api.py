@@ -292,6 +292,7 @@ class MovementApiTests(TestCase):
         }
         with patch.object(tasks, "run_module2_movement", return_value=(b"XLSX", {})) as mv, \
              patch.object(tasks, "reconciliation_report", return_value=recon), \
+             patch.object(tasks, "notes_report", return_value={"controls_checked": 0}), \
              patch("module2_engine.movement.workbook.build_json_companion", return_value={}):
             tasks.run_module2_movement_task(str(movement.id))
 
@@ -303,6 +304,11 @@ class MovementApiTests(TestCase):
         self.assertEqual(exp_bytes, _EXP_BYTES)
         # And the movement job persisted its own reusable input archive.
         self.assertTrue(movement.input_archive)
+        # The note-disclosure controls are recorded alongside the roll-forward
+        # reconciliation, under their own key so older jobs (which lack it) still parse.
+        warnings = movement.input_meta["movement_warnings"]
+        self.assertEqual(warnings["notes"], {"controls_checked": 0})
+        self.assertIn("reconciliation", warnings)
 
     @patch("processing.views.run_module2_movement_task.delay")
     def test_creates_job_and_dispatches(self, mocked_delay):

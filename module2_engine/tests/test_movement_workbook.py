@@ -32,12 +32,16 @@ def _frames():
     return types.SimpleNamespace(ifrs_summary_df=ifrs, allocate_sheets={"LC": lc})
 
 
-def test_workbook_has_entity_total_and_per_class_sheets():
+def test_workbook_has_entity_total_note_tabs_and_per_class_sheets():
     res = build_sama_movement(_frames())
     xlsx = render_sama_workbook(res, reporting_date="31/12/2024")
     assert isinstance(xlsx, bytes) and len(xlsx) > 0
     xl = pd.ExcelFile(io.BytesIO(xlsx))
-    assert set(xl.sheet_names) == {"Entity Total", "MOTOR", "PROPERTY"}
+    # Order matters: the notes sit between the entity total and the per-class detail,
+    # matching the client's own workbook layout.
+    assert xl.sheet_names == [
+        "Entity Total", "Gross_Note", "RI_Note", "IS", "BS", "MOTOR", "PROPERTY",
+    ]
 
 
 def test_workbook_contains_opening_closing_subtotals_and_reporting_date():
