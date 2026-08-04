@@ -148,3 +148,15 @@ class MovementNotesApiTests(TestCase):
         self.client.force_authenticate(user=outsider)
         res = self.client.get(self._url(job))
         self.assertIn(res.status_code, (403, 404), res.content)
+
+    def test_run_predating_the_notes_returns_an_empty_list_not_an_error(self):
+        """A companion written before the note layer existed has no `notes` key. The
+        endpoint must answer cleanly with no views so the UI can say so, rather than
+        erroring or inventing an empty table."""
+        stale = {"schema_version": "2026.06", "views": [
+            {"level": "entity", "label": "Total (all classes)", "reserving_class": None,
+             "uwy": None, "sheets": {}},
+        ]}
+        res = self.client.get(self._url(self._job(companion=stale)))
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.json()["views"], [])
