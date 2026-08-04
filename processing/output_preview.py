@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -104,6 +105,42 @@ def list_preview_files(zip_source: bytes | BinaryIO) -> list[OutputFileItem]:
                 out.append(OutputFileItem(path=path, size=info.file_size, kind=kind))
     out.sort(key=lambda x: x.path.lower())
     return out
+
+
+#: The movement job's machine-readable companion, written beside the workbook.
+MOVEMENT_NOTES_JSON = "IFRS17_Movement_Analysis.json"
+
+#: Bound on the companion we will parse. It is ~1 MB for the full 96-view grid; anything
+#: far beyond that is not a companion we wrote, and json.loads on an unbounded blob from
+#: storage is not something to do casually.
+_MAX_COMPANION_BYTES = 32 * 1024 * 1024
+
+
+def read_json_companion(zip_source: bytes | BinaryIO, file_path: str = MOVEMENT_NOTES_JSON) -> dict:
+    """Parse a JSON companion out of an output ZIP.
+
+    The three preview endpoints read workbooks; this reads the structured feed the movement
+    job writes alongside one, so callers get the disclosure as data instead of re-deriving
+    it from rendered cells.
+    """
+    target = _normalize_zip_path(file_path)
+    if not target.lower().endswith(".json"):
+        raise ValueError("Requested file is not a JSON companion.")
+    with _open_zip(zip_source) as zf:
+        try:
+            info = zf.getinfo(target)
+        except KeyError as exc:
+            raise ValueError("Requested file was not found in output ZIP.") from exc
+        if info.file_size > _MAX_COMPANION_BYTES:
+            raise ValueError("JSON companion is too large to parse.")
+        raw = zf.read(target)
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("JSON companion is not readable.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("JSON companion has an unexpected shape.")
+    return payload
 
 
 def _read_workbook_from_zip(zip_source: bytes | BinaryIO, file_path: str):

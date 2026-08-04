@@ -925,6 +925,43 @@ clean `HEAD` with these changes stashed, so they are pre-existing and unrelated.
 
 ---
 
+## 11c. In-app disclosure view (client follow-up)
+
+The client asked for the notes and an IS/BS summary **in the application**, not only in the
+workbook. §6.6 had judged the frontend work optional because the generic preview dialog can
+already display all four sheets as grids; this makes them first-class.
+
+**Backend — one endpoint, no recomputation.**
+`GET /api/module2/jobs/<pk>/movement/notes/` serves the JSON companion the movement job
+already writes beside its workbook, via a new `output_preview.read_json_companion`. The
+three existing preview endpoints read workbooks only (`rows` opens the file with openpyxl),
+so the companion was written but unreachable — that was the single real gap.
+
+- `?level=` filters the grain; the default is `entity,class`, since `cohort` is 83 views the
+  UI has no use for. The full companion is ~4 MB with cohorts included; the served payload
+  is 13 views.
+- Guards: non-movement job → 400; a run predating the companion → 400 with a readable
+  message, never a 500; no output → 404; another organisation's job → not readable; a
+  companion above 32 MB is refused rather than parsed.
+- Nine API tests cover exactly those paths.
+
+**Frontend — `/disclosure-notes`.** A `NoteTable` component renders the client's layout
+(measurement columns + Total, section headers, emphasised subtotals, `–` for structurally
+absent rows) and does **no arithmetic** — a test asserts a deliberately inconsistent Total
+renders as supplied, so what the screen shows is what the workbook contains. The page has a
+run selector, a reserving-class dropdown, and two tabs: *Notes* (`Gross_Note` + `RI_Note`,
+class-filtered) and *Summary* (`IS` + `BS`). Pending deviations are disclosed at the foot.
+
+**Grain decision, unchanged:** the notes are additive so they filter by class; `IS`/`BS`
+stay entity-level, because a per-class income statement implies allocating interest income,
+zakat and IFRS 9 items that have no class dimension (§11 Q5). The dropdown says so.
+
+Verified end-to-end against a companion the engine actually produces (not a fixture): 13
+views served, 12 deviations, `schema 2026.06+r2 / notes 2026.07`, entity carrying all four
+tables and each class carrying the two notes.
+
+---
+
 ## 12. Versioning, compatibility and rollout
 
 The analysis above is only half of production-readiness. These are the operational commitments.

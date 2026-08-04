@@ -27,6 +27,7 @@ from .output_preview import (
     list_preview_files,
     list_workbook_sheets,
     parse_page_args,
+    read_json_companion,
     read_sheet_page,
 )
 from .pagination import Module1JobPagination
@@ -1286,6 +1287,71 @@ class Module2JobOutputSheetsView(APIView):
             "sheets": [{"name": s.name, "rows": s.rows, "columns": s.columns} for s in sheets],
         }
         return Response(OutputSheetsResponseSerializer(payload).data)
+
+
+class Module2MovementNotesView(APIView):
+    """GET /api/module2/jobs/<pk>/movement/notes/ — the IFRS 17 note disclosure as data.
+
+    Serves the structured companion the movement job already writes beside its workbook, so
+    the dashboard can render Gross_Note / RI_Note / IS / BS as real tables instead of
+    re-deriving them from preview grid cells. Nothing is recomputed here.
+
+    ``?level=`` filters the grain (default ``entity,class`` — the grains the disclosure is
+    presented at; ``cohort`` is available but excluded by default because it is 83 views the
+    UI has no use for).
+    """
+
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    DEFAULT_LEVELS = ("entity", "class")
+    VALID_LEVELS = {"entity", "class", "cohort"}
+
+    def get(self, request, pk):
+        raw = (request.query_params.get("level") or "").strip()
+        if raw:
+            levels = {x.strip() for x in raw.split(",") if x.strip()}
+            unknown = levels - self.VALID_LEVELS
+            if unknown:
+                raise ValidationError(
+                    {"level": f"Unknown level(s): {', '.join(sorted(unknown))}."}
+                )
+        else:
+            levels = set(self.DEFAULT_LEVELS)
+
+        job = _get_accessible_module2_job(request, pk)
+        if job.job_type != Module1Job.JobType.MODULE2_MOVEMENT:
+            raise ValidationError({"detail": "This job is not a movement analysis."})
+
+        with _open_job_output_zip(job) as f:
+            try:
+                payload = read_json_companion(f)
+            except ValueError as exc:
+                # An older movement job predates the companion, or the archive is partial.
+                raise ValidationError({"detail": str(exc)}) from exc
+
+        views = [
+            {
+                "level": v.get("level"),
+                "label": v.get("label"),
+                "reserving_class": v.get("reserving_class"),
+                "uwy": v.get("uwy"),
+                "notes": v.get("notes") or {},
+            }
+            for v in (payload.get("views") or [])
+            if v.get("level") in levels and (v.get("notes") or {})
+        ]
+        return Response(
+            {
+                "job_id": str(job.id),
+                "schema_version": payload.get("schema_version"),
+                "notes_schema_version": payload.get("notes_schema_version"),
+                "reporting_date": payload.get("reporting_date"),
+                # Presentation corrections applied to defects in the client's template,
+                # still pending their confirmation — surfaced so the UI can disclose them.
+                "deviations": payload.get("deviations") or [],
+                "views": views,
+            }
+        )
 
 
 class Module2JobOutputRowsView(APIView):
