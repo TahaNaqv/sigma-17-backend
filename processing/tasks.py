@@ -52,6 +52,8 @@ from processing.utils import (
     job_root,
 )
 
+SENSITIVITY_ARTIFACT = "Sensitivity_Analysis.xlsx"
+
 
 def _materialize_job_snapshots(job: Module1Job) -> None:
     """For each kind in `input_meta["dataset_snapshots"]`, write each
@@ -160,6 +162,20 @@ def _normalize_module2_error(exc: Exception) -> str:
         return "Allocate output is invalid: Combined_Summary.xlsx not found."
     if "Referenced allocate job is not completed" in msg:
         return "Referenced allocate job is not completed successfully."
+    # Configuration errors are actionable and contain no internals. Falling through
+    # to the generic workbook message would send the user to debug the wrong thing
+    # (e.g. "check your sheets" when the real fault is an empty scenario list).
+    if any(
+        marker in msg
+        for marker in (
+            "No scenarios were supplied",
+            "Process-scope sensitivity requires",
+            "Unknown scope",
+            "is missing: supply it or select",
+            "Referenced Cash Flow Allocation job was not found",
+        )
+    ):
+        return msg
     return "Module 2 processing failed. Check workbook formats and required sheets."
 
 
@@ -722,3 +738,138 @@ def cascade_purge_task(self, root_job_id: str, actor_user_id: int | None = None,
     result = _cascade_purge(root, actor=actor, force=force)
     logger.info("retention.cascade_purge_complete", extra=result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity / stress testing
+# ---------------------------------------------------------------------------
+
+
+@shared_task(bind=True, ignore_result=True)
+def run_module2_sensitivity_task(self, job_id: str) -> None:
+    """Run base + N shocked passes and emit the comparison workbook.
+
+    Module 1 is never invoked: every lever (RA, CY discount curve, Selected ULR)
+    enters the model on the Module 2 side, so one Combined_Summary feeds every
+    scenario. Passes evaluate measures only — no per-scenario workbook — which on
+    the reference book is ~0.33s per allocate pass against ~3.3s with the write.
+    """
+    from module2_engine.scenarios import (
+        SCOPE_ALLOCATE,
+        SCOPE_PROCESS,
+        ScenarioShock,
+        TOTAL,
+        run_sensitivity,
+    )
+    from module2_engine.workbook_sensitivity import render_sensitivity_workbook
+
+    job = Module1Job.objects.select_related("organization", "source_job").get(pk=job_id)
+    job.status = Module1Job.Status.RUNNING
+    job.started_at = timezone.now()
+    job.save(update_fields=["status", "started_at"])
+    logger.info("module2_sensitivity.start", extra=_log_extra(job))
+
+    out_dir = job_output_dir(job)
+    root = job_root(job)
+    combined_path = root / "in" / "module2" / "combined" / "Combined_Summary.xlsx"
+    previous_path = root / "in" / "module2" / "previous" / "Previous_Period.xlsx"
+    expense_path = root / "in" / "module2" / "expense" / "Expense_CF.xlsx"
+    try:
+        meta = job.input_meta or {}
+        scope = meta.get("scope") or SCOPE_ALLOCATE
+        selected_ulr = meta.get("selected_ulr") or []
+        shocks = [ScenarioShock.from_dict(d) for d in (meta.get("scenarios") or [])]
+        if not shocks:
+            raise ValueError("No scenarios were supplied for this sensitivity run.")
+
+        combined_bytes = _resolve_combined_summary_bytes(job, fallback_path=combined_path)
+
+        previous_bytes = expense_bytes = None
+        accounting_period = None
+        if scope == SCOPE_PROCESS:
+            accounting_period = int(meta.get("accounting_period"))
+            process_job = None
+            if meta.get("process_job_id"):
+                process_job = Module1Job.objects.filter(
+                    pk=meta["process_job_id"], organization=job.organization
+                ).first()
+                if process_job is None:
+                    raise ValueError("Referenced Cash Flow Allocation job was not found.")
+            previous_bytes = _read_or_inherit_input(
+                previous_path, INPUT_ARCHIVE_PREVIOUS, process_job, label="Previous Period"
+            )
+            expense_bytes = _read_or_inherit_input(
+                expense_path, INPUT_ARCHIVE_EXPENSE, process_job, label="Expense CF"
+            )
+            _persist_input_archive(
+                job,
+                {
+                    INPUT_ARCHIVE_PREVIOUS: previous_bytes,
+                    INPUT_ARCHIVE_EXPENSE: expense_bytes,
+                },
+            )
+
+        def progress(i: int, n: int, label: str) -> None:
+            logger.info(
+                "module2_sensitivity.pass",
+                extra={**_log_extra(job), "pass_index": i, "pass_total": n,
+                       "scenario": label},
+            )
+
+        result = run_sensitivity(
+            combined_bytes,
+            shocks,
+            selected_ulr_rows=selected_ulr,
+            scope=scope,
+            previous_period_bytes=previous_bytes,
+            expense_cf_bytes=expense_bytes,
+            accounting_period=accounting_period,
+            progress=progress,
+        )
+
+        (out_dir / SENSITIVITY_ARTIFACT).write_bytes(
+            render_sensitivity_workbook(result)
+        )
+
+        # Persist the JSON matrix so the UI renders without re-cracking the ZIP,
+        # and so the run stays inspectable after the output is retention-purged.
+        meta = dict(job.input_meta or {})
+        meta["sensitivity"] = _serialize_sensitivity(result)
+        job.input_meta = meta
+        job.save(update_fields=["input_meta"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")
+            _finalize_success(job, out_dir, zip_path)
+        logger.info(
+            "module2_sensitivity.success",
+            extra={**_log_extra(job), "scenarios": len(shocks), "scope": scope},
+        )
+    except Exception as exc:
+        logger.exception("module2_sensitivity.failed", extra=_log_extra(job))
+        _mark_failed(job, exc, normalizer=_normalize_module2_error)
+    finally:
+        _cleanup_root(job)
+
+
+def _serialize_sensitivity(result) -> dict:
+    """JSON-safe projection of a SensitivityResult for input_meta and the API."""
+    from module2_engine.scenarios import ALL_MEASURES, TOTAL
+
+    measures = [
+        {"key": m.key, "label": m.label, "kind": m.kind}
+        for m in ALL_MEASURES if m.key in result.base
+    ]
+    return {
+        "scope": result.scope,
+        "measures": measures,
+        "reserving_classes": list(result.reserving_classes),
+        "scenarios": [s.to_dict() for s in result.shocks],
+        "resolved": list(result.resolved),
+        "warnings": list(result.warnings),
+        "base": {k: dict(v) for k, v in result.base.items()},
+        "values": [
+            {"scenario": s.label, "measures": {k: dict(v) for k, v in vals.items()}}
+            for s, vals in result.per_scenario
+        ],
+    }

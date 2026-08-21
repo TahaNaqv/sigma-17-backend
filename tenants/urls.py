@@ -19,4 +19,6 @@ urlpatterns = [
         name="org-membership-detail",
     ),
     path("auth/switch-org/", views.switch_org, name="auth-switch-org"),
+    path("scenario-sets/", views.ScenarioSetListCreateView.as_view(), name="scenario-sets"),
+    path("scenario-sets/<uuid:pk>/", views.ScenarioSetDetailView.as_view(), name="scenario-set-detail"),
 ]

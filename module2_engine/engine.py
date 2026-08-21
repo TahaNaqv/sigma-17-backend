@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 from core.excel import READ_ENGINE, WRITE_ENGINE
 from core.profiling import stage_timer
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from module2_engine.scenarios import ScenarioShock
 
 
 def _read_required_sheet(path_or_bytes: str | bytes | io.BytesIO, sheet_name: str, **kwargs) -> pd.DataFrame:
@@ -115,7 +118,24 @@ def calculate_discount_rates(data: pd.DataFrame, column_name: str) -> pd.DataFra
     return quarterly_data.drop(columns=["Yearly Spot Rate", "Quarterly Spot Rate"])
 
 
-def _apply_selected_ulr(uw_summary: pd.DataFrame, selected_ulr_rows: list[dict[str, Any]] | None) -> pd.DataFrame:
+def _apply_selected_ulr(
+    uw_summary: pd.DataFrame,
+    selected_ulr_rows: list[dict[str, Any]] | None,
+    *,
+    ulr_shock: float | None = None,
+    ulr_scope: tuple[str, ...] = (),
+) -> pd.DataFrame:
+    """Resolve Selected ULR, optionally shock it, then derive Combined Ratio.
+
+    ``ulr_shock`` is an ABSOLUTE addition (0.05 == +5 percentage points) applied
+    to the resolved ``Selected ULR`` COLUMN — deliberately not to
+    ``selected_ulr_rows``. When no explicit selections were made, Selected ULR
+    falls back to ``Ult LR``; shocking the input list would then be a silent
+    no-op. Shocking the column makes the shock behave identically whether or not
+    the user chose ULRs, which is the only defensible semantic for a disclosure.
+
+    Clipped at 0: a negative loss ratio is not meaningful.
+    """
     if not selected_ulr_rows:
         uw_summary["Selected ULR"] = uw_summary["Ult LR"]
     else:
@@ -132,6 +152,18 @@ def _apply_selected_ulr(uw_summary: pd.DataFrame, selected_ulr_rows: list[dict[s
             uwy = str(row["UWY"]).strip()
             out.append(selected_map.get((rc, uwy), float(row["Ult LR"])))
         uw_summary["Selected ULR"] = out
+    if ulr_shock:
+        if ulr_scope:
+            from module2_engine.scenarios import canonical_class
+            wanted = {canonical_class(c) for c in ulr_scope}
+            mask = uw_summary["RESERVINGCLASS"].map(
+                lambda v: canonical_class(v) in wanted
+            )
+        else:
+            mask = pd.Series(True, index=uw_summary.index)
+        uw_summary.loc[mask, "Selected ULR"] = (
+            uw_summary.loc[mask, "Selected ULR"] + float(ulr_shock)
+        ).clip(lower=0.0)
     uw_summary["Combined Ratio"] = (
         uw_summary["Selected ULR"] * (1 + uw_summary["RA %"])
         + uw_summary["Comm Ratio"]
@@ -140,7 +172,22 @@ def _apply_selected_ulr(uw_summary: pd.DataFrame, selected_ulr_rows: list[dict[s
     return uw_summary
 
 
-def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: list[dict[str, Any]] | None = None) -> tuple[bytes, list[dict[str, Any]]]:
+def _compute_allocate_frames(
+    combined_summary_bytes: bytes,
+    selected_ulr_rows: list[dict[str, Any]] | None = None,
+    *,
+    shock: "ScenarioShock | None" = None,
+) -> tuple[dict[str, pd.DataFrame], list[dict[str, Any]]]:
+    """Compute every allocate sheet as an in-memory frame. No workbook is written.
+
+    Split out of ``_build_allocate_outputs`` so sensitivity runs can evaluate many
+    scenarios cheaply: on the reference book the computation is ~0.33s while the
+    xlsx write is ~2.97s, so skipping the write is a ~10x saving per scenario.
+
+    ``shock`` (optional) applies one sensitivity lever at the single point that
+    dominates every consumer of that parameter. ``shock=None`` is a strict no-op
+    with no branch inside any loop, so unshocked output is unchanged.
+    """
     # Parse the workbook once; each sheet read below reuses it (was 8 full
     # openpyxl re-parses of the same file — plan §B).
     with stage_timer("m2.allocate.read_workbook"):
@@ -247,6 +294,11 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
     ulae_ra_combined[["ULAE %", "RA %"]] = ulae_ra_combined[
         ["ULAE %", "RA %"]
     ].apply(pd.to_numeric, errors="coerce").fillna(0)
+    # Sensitivity insertion point 1/3 (RA). This frame is read twice downstream —
+    # merged into merged_df for RA (OS)/RA (IBNR), and into uw_summary for
+    # Combined Ratio — so shocking here reaches every consumer.
+    if shock is not None:
+        ulae_ra_combined = shock.apply_ra(ulae_ra_combined)
     discount_rate_combined = pd.concat([discount_rate_names, discount_rate_values], axis=1)
     discount_rate_combined["Time Period"] = pd.to_numeric(
         discount_rate_combined["Time Period"], errors="coerce"
@@ -257,6 +309,11 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
     discount_rate_combined["PY Discount"] = pd.to_numeric(
         discount_rate_combined["PY Discount"].astype(str).str.rstrip("%"), errors="coerce"
     ).fillna(0)
+    # Sensitivity insertion point 2/3 (discount). Upstream of calculate_discount_rates,
+    # so it reaches Discounted CF CY/PY, the run-off loop's cy_disc/py_disc lookup and
+    # the CY-PY Discount sheet. CY column only — PY is the prior period's locked-in basis.
+    if shock is not None:
+        discount_rate_combined = shock.apply_discount(discount_rate_combined)
 
     cy_result_df = calculate_discount_rates(discount_rate_combined, "CY Discount")
     py_result_df = calculate_discount_rates(discount_rate_combined, "PY Discount")
@@ -359,7 +416,14 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
     uw_summary["Ultimate Claims"] = uw_summary["Incurred Claims"] + uw_summary["IBNR"]
     uw_summary["Ult LR"] = uw_summary["Ultimate Claims"] / uw_summary["GEP"].replace(0, np.nan)
     uw_summary["Ult LR"] = uw_summary["Ult LR"].fillna(0)
-    uw_summary = _apply_selected_ulr(uw_summary, selected_ulr_rows)
+    # Sensitivity insertion point 3/3 (ULR) — applied to the resolved column
+    # inside _apply_selected_ulr, not to selected_ulr_rows. See its docstring.
+    uw_summary = _apply_selected_ulr(
+        uw_summary,
+        selected_ulr_rows,
+        ulr_shock=shock.ulr_delta() if shock is not None else None,
+        ulr_scope=shock.ulr_scope() if shock is not None else (),
+    )
     loss_ratio_sheet = uw_summary[
         [
             "RESERVINGCLASS",
@@ -520,7 +584,6 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
         }
     )
 
-    out = io.BytesIO()
     # Single source of truth for the allocate sheets (insertion order == written
     # order). Returned so run_module2_process can reuse these frames instead of
     # re-reading the workbook it just wrote (plan §2.2).
@@ -537,10 +600,6 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
         "CY-PY Discount": combined_discount_df,
         "UPR-DAC_eop": upr_dac_eop_df,
     }
-    with stage_timer("m2.allocate.write_workbook"), pd.ExcelWriter(out, engine=WRITE_ENGINE) as writer:
-        for sheet_name, frame in allocate_sheets.items():
-            frame.to_excel(writer, index=False, sheet_name=sheet_name)
-
     ulr_rows: list[dict[str, Any]] = []
     for idx, row in loss_ratio_sheet.iterrows():
         ulr_rows.append(
@@ -568,7 +627,33 @@ def _build_allocate_outputs(combined_summary_bytes: bytes, selected_ulr_rows: li
                 "combined_ratio": float(row["Combined Ratio"]),
             }
         )
-    return out.getvalue(), ulr_rows, allocate_sheets
+    return allocate_sheets, ulr_rows
+
+
+def _write_allocate_workbook(allocate_sheets: dict[str, pd.DataFrame]) -> bytes:
+    """Serialize the allocate frames to xlsx bytes (insertion order == sheet order)."""
+    out = io.BytesIO()
+    with stage_timer("m2.allocate.write_workbook"), pd.ExcelWriter(out, engine=WRITE_ENGINE) as writer:
+        for sheet_name, frame in allocate_sheets.items():
+            frame.to_excel(writer, index=False, sheet_name=sheet_name)
+    return out.getvalue()
+
+
+def _build_allocate_outputs(
+    combined_summary_bytes: bytes,
+    selected_ulr_rows: list[dict[str, Any]] | None = None,
+    *,
+    shock: "ScenarioShock | None" = None,
+) -> tuple[bytes, list[dict[str, Any]], dict[str, pd.DataFrame]]:
+    """Compute the allocate frames and serialize them. Unchanged contract.
+
+    (The historic annotation claimed a 2-tuple while the function has always
+    returned a 3-tuple; corrected here.)
+    """
+    allocate_sheets, ulr_rows = _compute_allocate_frames(
+        combined_summary_bytes, selected_ulr_rows, shock=shock
+    )
+    return _write_allocate_workbook(allocate_sheets), ulr_rows, allocate_sheets
 
 
 def convert_accident_period_to_year(df: pd.DataFrame) -> pd.DataFrame:
@@ -791,6 +876,8 @@ def _process_intermediates(
     expense_cf_bytes: bytes,
     accounting_period: int,
     selected_ulr_rows: list[dict[str, Any]],
+    *,
+    shock: "ScenarioShock | None" = None,
 ) -> ProcessFrames:
     """Run the Module 2 process pipeline up to the IFRS Summary frame.
 
@@ -799,7 +886,9 @@ def _process_intermediates(
     """
     # Rebuild allocate outputs with selected ULR; reuse the in-memory frames
     # instead of re-reading the workbook we just produced (plan §2.2).
-    out_bytes, _, allocate_sheets = _build_allocate_outputs(combined_summary_bytes, selected_ulr_rows)
+    out_bytes, _, allocate_sheets = _build_allocate_outputs(
+        combined_summary_bytes, selected_ulr_rows, shock=shock
+    )
     # NB: read these two back from the serialized workbook rather than reusing the
     # in-memory frames. The xlsx round-trip normalises dtypes, and the downstream
     # movement/IFRS math is sensitive to that — reusing in-memory frames here
@@ -848,6 +937,46 @@ def _process_intermediates(
     )
 
 
+#: LRC component columns and their signs, by prev/curr suffix. Module-level so the
+#: sensitivity runner can build the same tables without writing a workbook.
+LRC_COMPONENTS: dict[str, dict[str, int]] = {
+    "prev": {"Gross UPR_prev": 1, "Rec_GOP_prev": -1, "DAC_prev": -1,
+             "Comm_Payable_prev": 1, "Rec_Provision_prev": 1},
+    "curr": {"Gross UPR_curr": 1, "Rec_GOP_curr": -1, "DAC_curr": -1,
+             "Comm_Payable_curr": 1, "Rec_Provision_curr": 1},
+}
+
+
+def lic_columns(suffix: str) -> list[str]:
+    """The LIC build-up columns for a prev/curr suffix, in reconciliation order."""
+    return [
+        f"GROSS - Outstanding_{suffix}",
+        f"GROSS - SS_{suffix}",
+        f"GROSS - Payment_{suffix}",
+        f"GROSS - S&S_{suffix}",
+        f"GROSS - ULAE_{suffix}",
+        f"GROSS - Discounting Impact_{suffix}",
+        f"Claim_Pay_{suffix}",
+        f"GROSS - RA (OS)_{suffix}",
+        f"GROSS - RA (IBNR)_{suffix}",
+    ]
+
+
+def create_lrc_table(df: pd.DataFrame, components_dict: dict[str, int]) -> pd.DataFrame:
+    table = df.groupby("RESERVINGCLASS")[list(components_dict.keys())].sum().reset_index()
+    for col, sign in components_dict.items():
+        table[col] = table[col] * sign
+    table["Gross LRC"] = table[list(components_dict.keys())].sum(axis=1)
+    return table
+
+
+def create_lic_table(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
+    lic_cols = lic_columns(suffix)
+    table = df.groupby("RESERVINGCLASS")[lic_cols].sum().reset_index()
+    table["GROSS LIC"] = table[lic_cols].sum(axis=1)
+    return table
+
+
 def run_module2_process(
     combined_summary_bytes: bytes,
     previous_period_bytes: bytes,
@@ -865,13 +994,6 @@ def run_module2_process(
     allocate_sheets = frames.allocate_sheets
     result_df = frames.result_df
     ifrs_summary_df = frames.ifrs_summary_df
-
-    def create_lrc_table(df: pd.DataFrame, components_dict: dict[str, int]) -> pd.DataFrame:
-        table = df.groupby("RESERVINGCLASS")[list(components_dict.keys())].sum().reset_index()
-        for col, sign in components_dict.items():
-            table[col] = table[col] * sign
-        table["Gross LRC"] = table[list(components_dict.keys())].sum(axis=1)
-        return table
 
     prev_components = {
         "Gross UPR_prev": 1,
@@ -894,22 +1016,6 @@ def run_module2_process(
     lrc_curr_with_header = pd.DataFrame([["LRC EOP"] + [""] * (len(lrc_curr.columns) - 1)], columns=lrc_curr.columns)
     lrc_curr_with_header = pd.concat([lrc_curr_with_header, lrc_curr], ignore_index=True)
     startrow_lrc_curr = len(lrc_prev_with_header) + 2
-
-    def create_lic_table(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
-        lic_cols = [
-            f"GROSS - Outstanding_{suffix}",
-            f"GROSS - SS_{suffix}",
-            f"GROSS - Payment_{suffix}",
-            f"GROSS - S&S_{suffix}",
-            f"GROSS - ULAE_{suffix}",
-            f"GROSS - Discounting Impact_{suffix}",
-            f"Claim_Pay_{suffix}",
-            f"GROSS - RA (OS)_{suffix}",
-            f"GROSS - RA (IBNR)_{suffix}",
-        ]
-        table = df.groupby("RESERVINGCLASS")[lic_cols].sum().reset_index()
-        table["GROSS LIC"] = table[lic_cols].sum(axis=1)
-        return table
 
     lic_prev = create_lic_table(ifrs_summary_df, "prev")
     lic_curr = create_lic_table(ifrs_summary_df, "curr")

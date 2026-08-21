@@ -14,6 +14,7 @@ class Module1Job(models.Model):
         MODULE2_ALLOCATE = "module2_allocate", "Module2 Allocate"
         MODULE2_PROCESS = "module2_process", "Module2 Process"
         MODULE2_MOVEMENT = "module2_movement", "IFRS 17 Movement Analysis"
+        MODULE2_SENSITIVITY = "module2_sensitivity", "Sensitivity Analysis"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -171,6 +172,7 @@ class JobDraft(models.Model):
         UPDATE_RESERVE = "update_reserve", "Update Reserves"
         IBNR_ALLOCATION = "ibnr_allocation", "Cash Flow Allocation"
         MOVEMENT = "movement", "Movement Analysis"
+        SENSITIVITY = "sensitivity", "Sensitivity Analysis"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(

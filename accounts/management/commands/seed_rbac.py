@@ -44,6 +44,8 @@ PERMISSIONS = [
     ("datasets.lock", "Lock Datasets", "Datasets", "Lock a dataset so its rows become read-only"),
     ("datasets.delete", "Delete Datasets", "Datasets", "Delete datasets and their rows"),
     # Processing
+    ("scenarios.view", "View Scenario Sets", "Processing", "View sensitivity scenario sets"),
+    ("scenarios.manage", "Manage Scenario Sets", "Processing", "Create and edit sensitivity scenario sets"),
     ("module1.run", "Run Module 1", "Processing", "Run Module 1 processing"),
     ("module2.run", "Run Module 2", "Processing", "Run Module 2 processing"),
     # Outputs
@@ -64,21 +66,24 @@ ROLE_PERMISSIONS = {
         "roles.view",
         "memberships.view", "memberships.manage",
         "files.upload", "files.view", "module1.run", "module2.run",
+        "scenarios.view", "scenarios.manage",
         "datasets.view", "datasets.edit", "datasets.lock", "datasets.delete",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
     "Actuary": [
         "files.upload", "files.view", "module1.run", "module2.run",
+        "scenarios.view", "scenarios.manage",
         "datasets.view", "datasets.edit", "datasets.lock", "datasets.delete",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
     "Analyst": [
         "files.upload", "files.view", "module1.run", "module2.run",
+        "scenarios.view",
         "datasets.view", "datasets.edit",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
     "Viewer": [
-        "files.view", "datasets.view",
+        "files.view", "datasets.view", "scenarios.view",
         "outputs.download", "dashboard.view", "runhistory.view",
     ],
 }

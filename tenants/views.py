@@ -197,3 +197,104 @@ def switch_org(request):
     profile.active_organization = org
     profile.save(update_fields=["active_organization"])
     return Response({"activeOrganization": OrganizationSerializer(org).data})
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity scenario sets
+# ---------------------------------------------------------------------------
+
+
+class ScenarioSetListCreateView(APIView):
+    """GET  /api/scenario-sets/     list this org's sets (active by default)
+    POST /api/scenario-sets/     create a new set (version 1)
+    """
+
+    def get_permissions(self):
+        from accounts.permissions import HasPermission
+        need = ["scenarios.view"] if self.request.method == "GET" else ["scenarios.manage"]
+        return [IsAuthenticated(), HasPermission(need)]
+
+    def _org(self, request):
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("Select an organization first.")
+        return org
+
+    def get(self, request):
+        from .serializers import ScenarioSetSerializer
+        from .models import ScenarioSet
+        qs = ScenarioSet.objects.filter(organization=self._org(request))
+        if request.query_params.get("all") not in ("1", "true", "yes"):
+            qs = qs.filter(is_active=True)
+        qs = qs.prefetch_related("scenarios")
+        return Response({"results": ScenarioSetSerializer(qs, many=True).data})
+
+    def post(self, request):
+        from .serializers import ScenarioSetSerializer
+        ser = ScenarioSetSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        obj = ser.save(organization=self._org(request), created_by=request.user)
+        return Response(ScenarioSetSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+class ScenarioSetDetailView(APIView):
+    """GET / PUT / DELETE one set.
+
+    PUT **forks a new version** rather than mutating in place: historic jobs
+    reference the version they ran under, and a sensitivity disclosure must remain
+    reproducible after the definition changes.
+    """
+
+    def get_permissions(self):
+        from accounts.permissions import HasPermission
+        need = ["scenarios.view"] if self.request.method == "GET" else ["scenarios.manage"]
+        return [IsAuthenticated(), HasPermission(need)]
+
+    def _get(self, request, pk):
+        from .models import ScenarioSet
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("Select an organization first.")
+        return get_object_or_404(ScenarioSet, pk=pk, organization=org)
+
+    def get(self, request, pk):
+        from .serializers import ScenarioSetSerializer
+        return Response(ScenarioSetSerializer(self._get(request, pk)).data)
+
+    @transaction.atomic
+    def put(self, request, pk):
+        from .models import Scenario, ScenarioSet
+        from .serializers import ScenarioSetSerializer
+        current = self._get(request, pk)
+        ser = ScenarioSetSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        scenarios = ser.validated_data.pop("scenarios", [])
+
+        next_version = (
+            ScenarioSet.objects.filter(
+                organization=current.organization, name=current.name
+            ).order_by("-version").first().version + 1
+        )
+        # Deactivate first: the partial unique constraint allows only one active
+        # set per (org, name).
+        ScenarioSet.objects.filter(
+            organization=current.organization, name=current.name, is_active=True
+        ).update(is_active=False)
+        new = ScenarioSet.objects.create(
+            organization=current.organization,
+            name=current.name,
+            description=ser.validated_data.get("description", current.description),
+            version=next_version,
+            is_active=True,
+            created_by=request.user,
+        )
+        Scenario.objects.bulk_create([
+            Scenario(scenario_set=new, order=i, **s) for i, s in enumerate(scenarios)
+        ])
+        return Response(ScenarioSetSerializer(new).data)
+
+    def delete(self, request, pk):
+        obj = self._get(request, pk)
+        obj.is_active = False
+        obj.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)

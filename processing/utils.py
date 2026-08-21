@@ -68,3 +68,16 @@ def init_module2_process_job_dirs(job) -> tuple[Path, Path]:
     expense.mkdir(parents=True, exist_ok=True)
     (root / "out").mkdir(parents=True, exist_ok=True)
     return previous, expense
+
+
+def init_module2_sensitivity_job_dirs(job) -> tuple[Path, Path, Path]:
+    """Staging for a sensitivity run: combined + optional previous/expense."""
+    root = job_root(job)
+    root.mkdir(parents=True, exist_ok=True)
+    combined = root / "in" / "module2" / "combined"
+    previous = root / "in" / "module2" / "previous"
+    expense = root / "in" / "module2" / "expense"
+    for d in (combined, previous, expense):
+        d.mkdir(parents=True, exist_ok=True)
+    (root / "out").mkdir(parents=True, exist_ok=True)
+    return combined, previous, expense

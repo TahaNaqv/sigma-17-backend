@@ -64,11 +64,13 @@ from .tasks import (
     run_module2_allocate_task,
     run_module2_movement_task,
     run_module2_process_task,
+    run_module2_sensitivity_task,
 )
 from .utils import (
     init_job_work_dir,
     init_module2_allocate_job_dirs,
     init_module2_process_job_dirs,
+    init_module2_sensitivity_job_dirs,
     init_update_reserve_job_dirs,
     init_uw_parameters_job_dirs,
     job_input_subdir,
@@ -85,6 +87,7 @@ MODULE2_JOB_TYPES = {
     Module1Job.JobType.MODULE2_ALLOCATE,
     Module1Job.JobType.MODULE2_PROCESS,
     Module1Job.JobType.MODULE2_MOVEMENT,
+    Module1Job.JobType.MODULE2_SENSITIVITY,
 }
 ALL_JOB_TYPES = MODULE1_JOB_TYPES | MODULE2_JOB_TYPES
 
@@ -1883,4 +1886,263 @@ class SourceCandidatesView(APIView):
             "page_size": page_size,
             "artifact": artifact,
             "results": data,
+        })
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity / stress testing
+# ---------------------------------------------------------------------------
+
+
+class Module2SensitivityJobView(APIView):
+    """POST /api/module2/jobs/sensitivity/
+
+    Runs base + one pass per scenario over a single Combined_Summary. Module 1 is
+    never re-run: every lever enters on the Module 2 side.
+
+    Scenarios come from a saved ScenarioSet (``scenario_set_id``) or inline
+    (``scenarios`` JSON). The resolved list is snapshotted into ``input_meta`` so
+    the run replays even if the set is later edited or deleted.
+
+    ``scope=process`` additionally reports Gross LIC / Gross LRC. Its extra inputs
+    are inherited from a chained Cash Flow Allocation job's durable input archive —
+    the same mechanism the movement job already uses — so nothing is re-supplied.
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def post(self, request):
+        from module2_engine.scenarios import (
+            LEVERS,
+            SCOPE_ALLOCATE,
+            SCOPE_PROCESS,
+        )
+        from tenants.models import ScenarioSet
+
+        combined = request.FILES.get("combined_summary")
+        source = _read_combined_summary_source(request)
+        _require_exactly_one(
+            combined, source,
+            file_name="combined_summary",
+            source_name="source_job_id",
+        )
+
+        scope = (request.POST.get("scope") or SCOPE_ALLOCATE).strip()
+        if scope not in (SCOPE_ALLOCATE, SCOPE_PROCESS):
+            raise ValidationError(
+                {"scope": f"Must be '{SCOPE_ALLOCATE}' or '{SCOPE_PROCESS}'."}
+            )
+
+        # --- scenarios: saved set or inline ---------------------------------
+        scenario_set_id = (request.POST.get("scenario_set_id") or "").strip()
+        raw_scenarios = request.POST.get("scenarios")
+        if scenario_set_id and raw_scenarios:
+            raise ValidationError(
+                {"detail": "Provide scenario_set_id or scenarios, not both."}
+            )
+        if scenario_set_id:
+            org = _require_org(request)
+            sset = ScenarioSet.objects.filter(
+                pk=scenario_set_id, organization=org
+            ).prefetch_related("scenarios").first()
+            if sset is None:
+                raise ValidationError({"scenario_set_id": "Scenario set was not found."})
+            scenarios = sset.resolved()
+            set_meta = {"id": str(sset.id), "name": sset.name, "version": sset.version}
+        elif raw_scenarios:
+            try:
+                scenarios = json.loads(raw_scenarios)
+            except json.JSONDecodeError as exc:
+                raise ValidationError({"scenarios": "Invalid JSON."}) from exc
+            if not isinstance(scenarios, list):
+                raise ValidationError({"scenarios": "Must be a JSON array."})
+            set_meta = None
+        else:
+            raise ValidationError(
+                {"scenarios": "Provide scenario_set_id or an inline scenarios array."}
+            )
+
+        if not scenarios:
+            raise ValidationError({"scenarios": "At least one scenario is required."})
+        if len(scenarios) > 50:
+            raise ValidationError(
+                {"scenarios": "At most 50 scenarios per run."}
+            )
+        for i, sc in enumerate(scenarios):
+            if not isinstance(sc, dict):
+                raise ValidationError({"scenarios": f"Entry {i} must be an object."})
+            if sc.get("lever") not in LEVERS:
+                raise ValidationError(
+                    {"scenarios": f"Entry {i}: lever must be one of {list(LEVERS)}."}
+                )
+            try:
+                float(sc["magnitude"])
+            except (KeyError, TypeError, ValueError):
+                raise ValidationError(
+                    {"scenarios": f"Entry {i}: magnitude must be a number."}
+                ) from None
+
+        # --- selected ULR ----------------------------------------------------
+        try:
+            selected_ulr = json.loads(request.POST.get("selected_ulr", "[]"))
+        except json.JSONDecodeError as exc:
+            raise ValidationError({"selected_ulr": "Invalid JSON."}) from exc
+        if not isinstance(selected_ulr, list):
+            raise ValidationError({"selected_ulr": "Must be a JSON array."})
+
+        # --- process-scope extras -------------------------------------------
+        previous = request.FILES.get("previous_period")
+        expense = request.FILES.get("expense_cf")
+        process_job_id = (request.POST.get("process_job_id") or "").strip()
+        accounting_period = request.POST.get("accounting_period")
+        process_job = None
+        if scope == SCOPE_PROCESS:
+            if not accounting_period:
+                raise ValidationError(
+                    {"accounting_period": "Required for process-scope sensitivity."}
+                )
+            try:
+                accounting_period = int(accounting_period)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    {"accounting_period": "Must be a year, e.g. 2024."}
+                ) from None
+            if process_job_id:
+                process_job = resolve_source_job(
+                    request=request,
+                    source_job_id=process_job_id,
+                    artifact=ARTIFACT_MODULE2_FINAL,
+                    field_name="process_job_id",
+                )
+                if process_job.job_type != Module1Job.JobType.MODULE2_PROCESS:
+                    raise ValidationError(
+                        {"process_job_id": "Must reference a Cash Flow Allocation (process) job."}
+                    )
+                if not process_job.input_archive:
+                    raise ValidationError({
+                        "process_job_id": (
+                            "This Cash Flow Allocation job predates input reuse — re-run it, "
+                            "or supply Previous Period and Expense CF manually."
+                        )
+                    })
+            inheriting = process_job is not None
+            if not previous and not inheriting:
+                raise ValidationError(
+                    {"previous_period": "Provide previous_period or process_job_id."}
+                )
+            if not expense and not inheriting:
+                raise ValidationError(
+                    {"expense_cf": "Provide expense_cf or process_job_id."}
+                )
+
+        uploads = [f for f in (combined, previous, expense) if f]
+        if uploads:
+            for f in uploads:
+                if not f.name.lower().endswith(".xlsx"):
+                    raise ValidationError({"detail": f"{f.name} must be an .xlsx file."})
+            _check_upload_budget(uploads)
+
+        job = _create_job(
+            request,
+            job_type=Module1Job.JobType.MODULE2_SENSITIVITY,
+            input_meta={},
+            source_job=source,
+            source_artifact=(ARTIFACT_COMBINED_SUMMARY if source else ""),
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        combined_dir, previous_dir, expense_dir = init_module2_sensitivity_job_dirs(job)
+
+        meta_files = {}
+        for file_obj, dest_dir, name in (
+            (combined, combined_dir, "Combined_Summary.xlsx"),
+            (previous, previous_dir, "Previous_Period.xlsx"),
+            (expense, expense_dir, "Expense_CF.xlsx"),
+        ):
+            if not file_obj:
+                continue
+            dest = dest_dir / name
+            with dest.open("wb") as outf:
+                for chunk in file_obj.chunks():
+                    outf.write(chunk)
+            meta_files[name] = {"name": file_obj.name, "size": file_obj.size}
+
+        job.input_meta = {
+            "files": meta_files,
+            "scope": scope,
+            "scenarios": scenarios,
+            "scenario_set": set_meta,
+            "selected_ulr": selected_ulr,
+            **({"accounting_period": accounting_period} if scope == SCOPE_PROCESS else {}),
+            **({"process_job_id": str(process_job.id)} if process_job else {}),
+        }
+        job.save(update_fields=["input_meta"])
+
+        run_module2_sensitivity_task.delay(str(job.id))
+        return Response(
+            Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED
+        )
+
+
+class Module2SensitivityResultView(APIView):
+    """GET /api/module2/jobs/{pk}/sensitivity/
+
+    The comparison matrix as JSON, so the UI renders without cracking the output
+    ZIP. Survives retention purge of the workbook because it lives in input_meta.
+
+    Optional ``?reserving_class=`` drills into one class; omitted means the total.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def get(self, request, pk):
+        from module2_engine.scenarios import TOTAL
+
+        job = _get_accessible_module2_job(request, pk)
+        if job.job_type != Module1Job.JobType.MODULE2_SENSITIVITY:
+            raise ValidationError(
+                {"detail": "Sensitivity results are available only for sensitivity jobs."}
+            )
+        payload = (job.input_meta or {}).get("sensitivity")
+        if not payload:
+            raise ValidationError(
+                {"detail": "Sensitivity results are available after the run succeeds."}
+            )
+
+        rc = request.query_params.get("reserving_class") or TOTAL
+        known = set(payload.get("reserving_classes") or [])
+        if rc != TOTAL and rc not in known:
+            raise ValidationError({"reserving_class": "Unknown reserving class."})
+
+        rows = []
+        base = payload.get("base") or {}
+        for m in payload.get("measures") or []:
+            key = m["key"]
+            b = float((base.get(key) or {}).get(rc, 0.0))
+            cells = []
+            for entry in payload.get("values") or []:
+                v = float((entry["measures"].get(key) or {}).get(rc, 0.0))
+                delta = v - b
+                cells.append({
+                    "scenario": entry["scenario"],
+                    "value": v,
+                    "absDelta": delta,
+                    "pctDelta": (delta / abs(b)) if abs(b) > 1e-9 else None,
+                    "responds": abs(delta) > 1e-9,
+                })
+            rows.append({**m, "base": b, "cells": cells})
+
+        return Response({
+            "job_id": str(job.id),
+            "scope": payload.get("scope"),
+            "reserving_class": rc,
+            "reserving_classes": payload.get("reserving_classes") or [],
+            "scenarios": payload.get("scenarios") or [],
+            "resolved": payload.get("resolved") or [],
+            "warnings": payload.get("warnings") or [],
+            "rows": rows,
         })

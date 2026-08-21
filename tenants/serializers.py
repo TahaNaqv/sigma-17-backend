@@ -94,3 +94,80 @@ class MembershipUpdateSerializer(serializers.Serializer):
 
 class SwitchOrgSerializer(serializers.Serializer):
     organizationId = serializers.UUIDField()
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity scenario sets
+# ---------------------------------------------------------------------------
+
+from module2_engine.scenarios import LEVER_UNITS, LEVERS  # noqa: E402
+
+from .models import Scenario, ScenarioSet  # noqa: E402
+
+
+class ScenarioSerializer(serializers.ModelSerializer):
+    scopeClasses = serializers.JSONField(source="scope_classes", required=False)
+    unit = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Scenario
+        fields = ["id", "label", "lever", "magnitude", "scopeClasses", "order",
+                  "unit", "description"]
+
+    def get_unit(self, obj) -> str:
+        return LEVER_UNITS.get(obj.lever, "")
+
+    def get_description(self, obj) -> str:
+        from module2_engine.scenarios import ScenarioShock
+        return ScenarioShock(
+            label=obj.label, lever=obj.lever, magnitude=float(obj.magnitude)
+        ).describe()
+
+    def validate_lever(self, value):
+        if value not in LEVERS:
+            raise serializers.ValidationError(f"Unknown lever; expected one of {LEVERS}.")
+        return value
+
+    def validate(self, attrs):
+        lever = attrs.get("lever", getattr(self.instance, "lever", None))
+        mag = attrs.get("magnitude", getattr(self.instance, "magnitude", None))
+        if lever is None or mag is None:
+            return attrs
+        mag = float(mag)
+        # Guard-rails matched to each lever's unit. These are the values that make
+        # a shock nonsense rather than merely severe.
+        if lever == "ra" and mag <= -1.0:
+            raise serializers.ValidationError(
+                {"magnitude": "A relative RA shock of -100% or worse removes the loading entirely."}
+            )
+        if lever == "discount" and abs(mag) > 10_000:
+            raise serializers.ValidationError(
+                {"magnitude": "Discount shocks are in basis points; +/-10,000bp is a 100% move."}
+            )
+        if lever == "ulr" and abs(mag) > 5.0:
+            raise serializers.ValidationError(
+                {"magnitude": "ULR shocks are absolute fractions; 5.0 is +500 percentage points."}
+            )
+        return attrs
+
+
+class ScenarioSetSerializer(serializers.ModelSerializer):
+    scenarios = ScenarioSerializer(many=True, required=False)
+    isActive = serializers.BooleanField(source="is_active", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    createdBy = serializers.CharField(source="created_by.email", read_only=True, default=None)
+
+    class Meta:
+        model = ScenarioSet
+        fields = ["id", "name", "description", "version", "isActive",
+                  "createdAt", "createdBy", "scenarios"]
+        read_only_fields = ["version"]
+
+    def create(self, validated):
+        scenarios = validated.pop("scenarios", [])
+        obj = ScenarioSet.objects.create(**validated)
+        Scenario.objects.bulk_create([
+            Scenario(scenario_set=obj, order=i, **s) for i, s in enumerate(scenarios)
+        ])
+        return obj
