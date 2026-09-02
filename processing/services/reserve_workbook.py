@@ -190,6 +190,90 @@ def _cell_number(ws_data, ws_formulas, row: int, col: int):
         return None
 
 
+#: The block each triangle sheet opens with. Blocks 2..n are labelled in column 1 of the blank
+#: row above them; the block at row 1 cannot be (a label there becomes the pandas header and
+#: degrades every golden frame), so it is identified by sheet name. Mirrors
+#: `module1_engine.engine.LEADING_BLOCK`.
+LEADING_BLOCK = {
+    "Paid Claims Triangle": "Incremental Triangle",
+    "Reported Triangle": "Cumulative Triangle",
+}
+
+BLOCK_LABELS = ("Incremental Triangle", "Cumulative Triangle", "Age-to-Age Factors")
+A2A_BLOCK = "Age-to-Age Factors"
+CUMULATIVE_BLOCK = "Cumulative Triangle"
+
+#: Rows that close the age-to-age block. The benchmark header repeats "Accident Period", so
+#: the block ends at whichever of these appears first below it.
+_BENCHMARK_START_LABELS = ("Accident Period",)
+
+
+def _read_blocks(ws, sheet_name: str, max_row: int, max_col: int) -> dict:
+    """Locate each triangle block by its label, as `{label: {header_row, first_row, last_row}}`.
+
+    Rows are 1-based sheet rows. Derived from labels rather than from the engine's row
+    arithmetic — that arithmetic is duplicated, brittle, and has already drifted once.
+
+    A workbook produced before WP1 has no labels at all; it yields `{}`, and the caller
+    degrades to the historic behaviour rather than guessing.
+    """
+    header_rows: list[tuple[int, str]] = []
+    for row in range(1, max_row + 1):
+        value = ws.cell(row=row, column=1).value
+        if value in BLOCK_LABELS:
+            # The block's own header sits on the row below its label.
+            header_rows.append((row + 1, str(value)))
+        elif row == 1 and sheet_name in LEADING_BLOCK:
+            header_rows.append((1, LEADING_BLOCK[sheet_name]))
+
+    blocks: dict[str, dict] = {}
+    for position, (header_row, label) in enumerate(header_rows):
+        first = header_row + 1
+        # The block runs until the next block's label, or until a labelled row / blank run.
+        if position + 1 < len(header_rows):
+            limit = header_rows[position + 1][0] - 2
+        else:
+            limit = max_row
+        last = first - 1
+        for row in range(first, limit + 1):
+            cell = ws.cell(row=row, column=1).value
+            if cell is None or str(cell) in _BENCHMARK_START_LABELS:
+                break
+            last = row
+        if last >= first:
+            blocks[label] = {
+                "header_row": header_row,
+                "first_row": first,
+                "last_row": last,
+            }
+    return blocks
+
+
+def _read_block_matrix(ws_data, ws_formulas, blocks: dict, label: str, max_col: int):
+    """One block as `(row_labels, matrix)`, preserving blanks as `None`.
+
+    Returned separately from `grid` for two reasons: the client must not re-derive which rows
+    hold factors, and these matrices are served even when the cell guard suppresses the full
+    grid, so average selection still works on very large triangles.
+
+    `None` and `0.0` are kept distinct — a blank is an undefined factor, a zero is real data
+    (cumulative paid can fall through the Motor recovery substitution).
+    """
+    block = blocks.get(label)
+    if not block:
+        return [], []
+    labels: list[str] = []
+    matrix: list[list[float | None]] = []
+    for row in range(block["first_row"], block["last_row"] + 1):
+        row_label = ws_formulas.cell(row=row, column=1).value
+        labels.append("" if row_label is None else str(row_label))
+        matrix.append([
+            _cell_number(ws_data, ws_formulas, row, col)
+            for col in range(2, max_col + 1)
+        ])
+    return labels, matrix
+
+
 def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
     """Pull the column labels (row 1) plus the current Selected LDF and Selected
     CDF rows for one triangle sheet.
@@ -215,6 +299,8 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
         "sheet": sheet_name, "cdf_row": None, "ldf_row": None,
         "column_labels": [], "values": [], "selected_ldf": [],
         "grid": [], "grid_truncated": False,
+        "blocks": {}, "a2a_matrix": [], "a2a_row_labels": [],
+        "cumulative_matrix": [],
     }
     if sheet_name not in wb_formulas.sheetnames:
         return empty
@@ -243,6 +329,14 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
     truncated = (max_row * max_col) > max_cells
     grid = [] if truncated else _read_grid(ws_data, max_row, max_col)
 
+    blocks = _read_blocks(ws, sheet_name, max_row, max_col)
+    a2a_rows, a2a_matrix = _read_block_matrix(ws_data, ws, blocks, A2A_BLOCK, max_col)
+    # The cumulative block too: volume weighting is a ratio of cumulative sums, so it cannot
+    # be recovered from the age-to-age factors alone.
+    _, cumulative_matrix = _read_block_matrix(
+        ws_data, ws, blocks, CUMULATIVE_BLOCK, max_col
+    )
+
     return {
         "sheet": sheet_name,
         "cdf_row": cdf_row,
@@ -252,6 +346,10 @@ def _read_triangle_cdf(wb_data_only, wb_formulas, sheet_name: str) -> dict:
         "selected_ldf": selected_ldf,
         "grid": grid,
         "grid_truncated": truncated,
+        "blocks": blocks,
+        "a2a_matrix": a2a_matrix,
+        "a2a_row_labels": a2a_rows,
+        "cumulative_matrix": cumulative_matrix,
     }
 
 

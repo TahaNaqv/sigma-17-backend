@@ -18,7 +18,9 @@ from accounts.permissions import (
     user_has_any_permission,
     user_has_role,
 )
-from datasets.models import Dataset
+import pandas as pd
+
+from datasets.models import Dataset, DatasetSnapshot
 from datasets.services.snapshots import create_snapshot
 from tenants.permissions import get_request_org
 
@@ -380,6 +382,134 @@ def _resolve_datasets(
         )
     # Preserve user-supplied order.
     return [found[i] for i in ids]
+
+
+def _attach_large_claim_exclusion(request, meta: dict) -> dict:
+    """Record a large-claim exclusion on a summary job.
+
+    Persisted with the job — claim numbers, mode, selection basis, actor and timestamp —
+    because excluding a claim is a material actuarial judgement a reviewer will ask about,
+    and because a re-run must reproduce the same exclusion.
+    """
+    from module1_engine.large_claims import DEFAULT_MODE, MODES
+
+    raw = (request.POST.get("excluded_claims") or "").strip()
+    if not raw:
+        return meta
+    try:
+        claims = json.loads(raw) if raw.startswith("[") else [
+            c.strip() for c in raw.split(",") if c.strip()
+        ]
+    except json.JSONDecodeError as exc:
+        raise ValidationError({"excluded_claims": "Invalid JSON."}) from exc
+    if not isinstance(claims, list) or not claims:
+        return meta
+    claims = [str(c) for c in claims]
+    if len(claims) > 5000:
+        raise ValidationError({"excluded_claims": "At most 5,000 claims per run."})
+
+    mode = (request.POST.get("exclusion_mode") or DEFAULT_MODE).strip()
+    if mode not in MODES:
+        raise ValidationError({"exclusion_mode": f"Must be one of {list(MODES)}."})
+
+    meta["large_claims"] = {
+        "mode": mode,
+        "claim_numbers": claims,
+        "selection": json.loads(request.POST.get("exclusion_selection") or "{}")
+        if request.POST.get("exclusion_selection") else {},
+        "actor": getattr(request.user, "email", "") or str(request.user),
+        "applied_at": timezone.now().isoformat(),
+    }
+    return meta
+
+
+def _attach_class_aliases(request, meta: dict) -> dict:
+    """Snapshot the org's reserving-class aliases onto the job.
+
+    Resolved at creation time, exactly like the UPR policy and for the same reason: an alias
+    decides which claims enter a reserve, so a re-run months later must apply the aliases the
+    run actually used, not whatever the org has configured by then. An org with no aliases
+    leaves `meta` untouched and the run stays bit-identical.
+    """
+    from tenants.models import alias_map_for
+
+    aliases = alias_map_for(get_request_org(request))
+    if aliases:
+        meta["class_aliases"] = aliases
+    return meta
+
+
+def _attach_upr_policy(request, meta: dict) -> dict:
+    """Snapshot the org's active UPR policy onto a Module 1 job's input_meta.
+
+    Resolved to plain rule dicts at creation time, not read live at run time: a job must
+    replay with the methodology it actually used even if the policy is later edited or the
+    version deleted. Absent (or default) policy leaves `meta` untouched, so the common case
+    carries no extra state and stays bit-identical.
+    """
+    from tenants.models import UprMethodPolicy
+
+    org = get_request_org(request)
+    if org is None:
+        return meta
+    policy = (
+        UprMethodPolicy.objects.filter(organization=org, is_active=True)
+        .prefetch_related("rules")
+        .order_by("name", "-version")
+        .first()
+    )
+    if policy is None:
+        return meta
+    rules = policy.resolved()
+    if not rules:
+        return meta
+    meta["upr_policy"] = {
+        "id": str(policy.id),
+        "name": policy.name,
+        "version": policy.version,
+        "rules": rules,
+    }
+    return meta
+
+
+def _read_pattern_override_input(request):
+    """Parse the optional payment-pattern dataset id + mode from a Module 2 job form.
+
+    Returns ``(ids, mode)``. Both allocate and process accept these, so the parsing and
+    the mode validation live in one place.
+    """
+    from module2_engine.pattern_override import MODE_SHAPE_ONLY, MODES
+
+    ids = _parse_dataset_ids(
+        (request.POST.get("payment_pattern_dataset_id") or "").strip(),
+        "payment_pattern_dataset_id",
+    )
+    mode = (request.POST.get("pattern_mode") or MODE_SHAPE_ONLY).strip()
+    if mode not in MODES:
+        raise ValidationError(
+            {"pattern_mode": f"Must be one of {list(MODES)}."}
+        )
+    return ids, mode
+
+
+def _attach_pattern_override(request, job, meta: dict) -> dict:
+    """Resolve, snapshot and record a payment-pattern dataset onto a job's input_meta.
+
+    Snapshot-on-run, like every other dataset input: the job replays with the exact
+    pattern it consumed even if the dataset is edited afterwards.
+    """
+    ids, mode = _read_pattern_override_input(request)
+    if not ids:
+        return meta
+    datasets = _resolve_datasets(
+        request, ids=ids,
+        expected_kind=Dataset.Kind.PAYMENT_PATTERN,
+        field_name="payment_pattern_dataset_id",
+    )
+    snaps = _snapshot_for_job(datasets, job)
+    meta.setdefault("dataset_snapshots", {})["payment_pattern"] = snaps
+    meta["pattern_mode"] = mode
+    return meta
 
 
 def _snapshot_for_job(datasets: list[Dataset], job: Module1Job) -> list[str]:
@@ -816,11 +946,14 @@ class Module1SummaryJobView(APIView):
                 "size": existing.size,
             }
 
-        job.input_meta = {
+        meta = _attach_upr_policy(request, {
             **job.input_meta,
             "files": meta_files,
             "dataset_snapshots": dataset_snapshots,
-        }
+        })
+        meta = _attach_large_claim_exclusion(request, meta)
+        meta = _attach_class_aliases(request, meta)
+        job.input_meta = meta
         job.save(update_fields=["input_meta"])
 
         run_module1_summary_task.delay(str(job.id))
@@ -880,11 +1013,11 @@ class Module1PolicyUprJobView(APIView):
         if premium_datasets:
             dataset_snapshots["premium"] = _snapshot_for_job(premium_datasets, job)
 
-        job.input_meta = {
+        job.input_meta = _attach_upr_policy(request, {
             **job.input_meta,
             "files": meta_files,
             "dataset_snapshots": dataset_snapshots,
-        }
+        })
         job.save(update_fields=["input_meta"])
 
         run_module1_policy_upr_task.delay(str(job.id))
@@ -938,6 +1071,22 @@ class Module1UpdateReserveJobView(APIView):
                 raise ValidationError(
                     {"ldf_overrides": "Must be a JSON object."}
                 )
+
+        # The JUDGEMENT behind `ldf_overrides`: which average basis produced the vector, and
+        # which factors the actuary struck out to get there. Recorded because the derived LDF
+        # alone tells a reviewer what was applied but not why, and because the same selection
+        # has to be reproducible at the next valuation. Never read back by the engine.
+        ldf_selection_raw = request.POST.get("ldf_selection")
+        ldf_selection = None
+        if ldf_selection_raw:
+            try:
+                ldf_selection = json.loads(ldf_selection_raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationError({"ldf_selection": "Invalid JSON."}) from exc
+            if not isinstance(ldf_selection, dict):
+                raise ValidationError({"ldf_selection": "Must be a JSON object."})
+            if len(json.dumps(ldf_selection)) > 200_000:
+                raise ValidationError({"ldf_selection": "Too large."})
 
         # Implied LR / Selected Method overrides — the Excel-free equivalent of
         # editing the Reserve Summary's G (Implied LR) and O (Selected Method)
@@ -1025,6 +1174,8 @@ class Module1UpdateReserveJobView(APIView):
             new_meta["cdf_overrides"] = cdf_overrides
         if ldf_overrides is not None:
             new_meta["ldf_overrides"] = ldf_overrides
+        if ldf_selection is not None:
+            new_meta["ldf_selection"] = ldf_selection
         if method_overrides is not None:
             new_meta["method_overrides"] = method_overrides
         job.input_meta = new_meta
@@ -1431,7 +1582,8 @@ class Module2AllocateJobView(APIView):
                     outf.write(chunk)
             meta_files["combined_summary"] = {"name": combined.name, "size": combined.size}
 
-        job.input_meta = {"files": meta_files}
+        meta = _attach_pattern_override(request, job, {"files": meta_files})
+        job.input_meta = meta
         job.save(update_fields=["input_meta"])
 
         run_module2_allocate_task.delay(str(job.id))
@@ -1605,6 +1757,7 @@ class Module2ProcessJobView(APIView):
         meta = job.input_meta or {}
         meta["files"] = meta_files
         meta["dataset_snapshots"] = dataset_snapshots
+        meta = _attach_pattern_override(request, job, meta)
         job.input_meta = meta
         job.save(update_fields=["input_meta"])
         run_module2_process_task.delay(str(job.id))
@@ -1824,6 +1977,8 @@ class Module2MovementJobView(APIView):
         meta["files"] = meta_files
         meta["dataset_snapshots"] = dataset_snapshots
         job.input_meta = meta
+        job.save(update_fields=["input_meta"])
+        job.input_meta = _attach_pattern_override(request, job, job.input_meta)
         job.save(update_fields=["input_meta"])
         run_module2_movement_task.delay(str(job.id))
         return Response(Module1JobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
@@ -2146,3 +2301,695 @@ class Module2SensitivityResultView(APIView):
             "warnings": payload.get("warnings") or [],
             "rows": rows,
         })
+
+
+# ---------------------------------------------------------------------------
+# Payment pattern preview (requirement 2)
+# ---------------------------------------------------------------------------
+
+
+class Module2PatternPreviewView(APIView):
+    """GET /api/module2/jobs/{pk}/payment-pattern/
+
+    Seeds the pattern editor with TWO curves per reserving class:
+
+    * ``engine`` — the ``Payment Pattern`` sheet this run produced. Note this is a
+      *conditional* average of per-cohort future payouts across every maturity, not a
+      from-inception pattern; on the reference book it puts 48% of ENGINEERING claims in
+      the first quarter against an actual from-inception 6%.
+    * ``derived`` — the from-inception pattern computed from the same run's development
+      experience. This is the object an actuary means by "a payment pattern" and the one
+      the LRC run-off convolution needs.
+
+    Showing both is the point: the actuary can see what the engine is currently using,
+    compare it against their own experience, and adopt or edit from there.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def get(self, request, pk):
+        import numpy as np
+        import pandas as pd
+
+        from module2_engine.engine import _compute_allocate_frames
+
+        job = _get_accessible_module2_job(request, pk)
+        if job.job_type not in (
+            Module1Job.JobType.MODULE2_ALLOCATE,
+            Module1Job.JobType.MODULE2_PROCESS,
+        ):
+            raise ValidationError(
+                {"detail": "Pattern preview is available for allocate and process jobs."}
+            )
+        if job.status != Module1Job.Status.SUCCESS:
+            raise ValidationError(
+                {"detail": "Pattern preview is available after the job succeeds."}
+            )
+
+        # A process job's output is Module2_Final_Output.xlsx — it does NOT carry
+        # Combined_Summary.xlsx. Its allocate ancestor does, so resolve through that.
+        artifact_source = job
+        if job.job_type == Module1Job.JobType.MODULE2_PROCESS:
+            artifact_source = job.source_job
+            if artifact_source is None:
+                raise ValidationError({
+                    "detail": (
+                        "This job has no allocate ancestor to read Combined_Summary from."
+                    )
+                })
+        combined = read_artifact_bytes(
+            source_job=artifact_source, artifact=ARTIFACT_COMBINED_SUMMARY
+        )
+        frames, _ = _compute_allocate_frames(combined, None)
+        main = frames["MainSheet"]
+        cols = [c for c in main.columns if isinstance(c, (int, np.integer))]
+
+        engine = frames["Payment Pattern"].set_index("RESERVINGCLASS")
+        engine.columns = [int(c) for c in engine.columns]
+
+        gross = main[main["GROSS/RI"] == "GROSS"]
+        inc = (
+            gross.drop_duplicates(subset=["RESERVINGCLASS", "Age"])
+            .pivot(index="RESERVINGCLASS", columns="Age", values="Incremental")
+            .reindex(columns=cols)
+            .fillna(0.0)
+        )
+        totals = inc.sum(axis=1).replace(0, np.nan)
+        derived = inc.div(totals, axis=0).fillna(0.0)
+
+        def _clean(vec) -> list[float]:
+            return [0.0 if pd.isna(v) else float(v) for v in vec]
+
+        rows = []
+        for rc in engine.index:
+            rows.append({
+                "reserving_class": str(rc),
+                "engine": _clean(engine.loc[rc].reindex(cols).values),
+                "derived": _clean(derived.loc[rc].reindex(cols).values)
+                if rc in derived.index else [0.0] * len(cols),
+            })
+
+        return Response({
+            "job_id": str(job.id),
+            "periods": [int(c) for c in cols],
+            "rows": rows,
+        })
+
+
+# ---------------------------------------------------------------------------
+# Cash flow projection (requirement 3)
+# ---------------------------------------------------------------------------
+
+#: Aggregation grains offered by the projection view, coarsest first. The native
+#: grain of `FutureCF` is (class, UWY, accident period, treaty) — 2,476 x 30 = 74,280
+#: cells, which exceeds MODULE1_OUTPUT_PREVIEW_MAX_CELLS, so the raw sheet cannot be
+#: rendered in-app at all. These grains are what make the projection readable.
+CASHFLOW_GRAINS: dict[str, list[str]] = {
+    "class": ["RESERVINGCLASS"],
+    "class_treaty": ["RESERVINGCLASS", "GROSS/RI"],
+    "class_uwy": ["RESERVINGCLASS", "UWY"],
+    "class_uwy_treaty": ["RESERVINGCLASS", "UWY", "GROSS/RI"],
+}
+DEFAULT_CASHFLOW_GRAIN = "class_uwy"
+
+
+class Module2CashflowProjectionView(APIView):
+    """GET /api/module2/jobs/{pk}/cashflow-projection/?grain=class_uwy
+
+    The projected future claims cash flows this job produced, aggregated to a grain an
+    actuary can actually read, with the undiscounted and discounted profiles side by side
+    and the resulting discounting impact.
+
+    Why this exists: `FutureCF` is written to the output workbook at native grain —
+    2,476 x 30 = 74,280 cells against a 20,000-cell preview guard — so it ships in the ZIP
+    but the in-app preview refuses to render it. Users were being asked to accept a
+    cash-flow projection they could not look at.
+
+    The frames are recomputed rather than read back from the ZIP, and **the job's own
+    payment-pattern override is re-applied** so the view shows what the job actually ran
+    with. Recomputing without it would quietly show a different projection than the one
+    the workbook contains.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module2.run"])]
+
+    def get(self, request, pk):
+        import numpy as np
+        import pandas as pd
+
+        from module2_engine.engine import _compute_allocate_frames
+        from processing.tasks import _load_pattern_override
+
+        job = _get_accessible_module2_job(request, pk)
+        if job.job_type not in (
+            Module1Job.JobType.MODULE2_ALLOCATE,
+            Module1Job.JobType.MODULE2_PROCESS,
+        ):
+            raise ValidationError({
+                "detail": "Cash flow projection is available for allocate and process jobs."
+            })
+        if job.status != Module1Job.Status.SUCCESS:
+            raise ValidationError({
+                "detail": "Cash flow projection is available after the job succeeds."
+            })
+
+        grain = (request.query_params.get("grain") or DEFAULT_CASHFLOW_GRAIN).strip()
+        if grain not in CASHFLOW_GRAINS:
+            raise ValidationError({
+                "grain": f"Must be one of {sorted(CASHFLOW_GRAINS)}."
+            })
+        keys = CASHFLOW_GRAINS[grain]
+
+        # A process job's output carries Module2_Final_Output.xlsx only; its allocate
+        # ancestor holds Combined_Summary.
+        artifact_source = job
+        if job.job_type == Module1Job.JobType.MODULE2_PROCESS:
+            artifact_source = job.source_job
+            if artifact_source is None:
+                raise ValidationError({
+                    "detail": "This job has no allocate ancestor to read Combined_Summary from."
+                })
+        combined = read_artifact_bytes(
+            source_job=artifact_source, artifact=ARTIFACT_COMBINED_SUMMARY
+        )
+
+        frames, _ = _compute_allocate_frames(
+            combined, None, pattern_override=_load_pattern_override(job)
+        )
+        future = frames["FutureCF"]
+        disc_cy = frames["Discounted CF CY"]
+        periods = [c for c in future.columns if isinstance(c, (int, np.integer))]
+
+        def _agg(frame: pd.DataFrame) -> pd.DataFrame:
+            return frame.groupby(keys, dropna=False)[periods].sum().reset_index()
+
+        agg_future = _agg(future)
+        agg_disc = _agg(disc_cy)
+
+        rows = []
+        for i in range(len(agg_future)):
+            undisc = [float(v) for v in agg_future.loc[i, periods].values]
+            disc = [float(v) for v in agg_disc.loc[i, periods].values]
+            t_undisc, t_disc = sum(undisc), sum(disc)
+            rows.append({
+                "keys": {k: str(agg_future.loc[i, k]) for k in keys},
+                "label": " · ".join(str(agg_future.loc[i, k]) for k in keys),
+                "undiscounted": undisc,
+                "discounted": disc,
+                "total_undiscounted": t_undisc,
+                "total_discounted": t_disc,
+                # Negative = the benefit of discounting. Same sign convention as the
+                # engine's own Discounting Impact column.
+                "discounting_impact": t_disc - t_undisc,
+            })
+
+        total_undisc = float(future[periods].to_numpy().sum())
+        total_disc = float(disc_cy[periods].to_numpy().sum())
+        return Response({
+            "job_id": str(job.id),
+            "grain": grain,
+            "grains": sorted(CASHFLOW_GRAINS),
+            "key_columns": keys,
+            "periods": [int(p) for p in periods],
+            "rows": rows,
+            "totals": {
+                "undiscounted": total_undisc,
+                "discounted": total_disc,
+                "discounting_impact": total_disc - total_undisc,
+            },
+            "has_pattern_override": bool(
+                (job.input_meta or {}).get("dataset_snapshots", {}).get("payment_pattern")
+            ),
+        })
+
+
+# ---------------------------------------------------------------------------
+# UPR policy impact preview (requirement 4)
+# ---------------------------------------------------------------------------
+
+
+class Module1UprImpactView(APIView):
+    """POST /api/module1/upr-impact/
+
+    What a candidate UPR policy would do to UPR, per reserving class, WITHOUT running a job.
+
+    Changing the earning basis moves UPR and therefore GEP, Allocation EP, the run-off and
+    everything Module 2 derives from them. On the reference book the intended policy moves
+    the book only +0.86% but Engineering +51.25% and Marine -6.20% — small in aggregate,
+    material where it lands. Nobody should adopt a methodology change without that number.
+
+    Body: ``{premium_dataset_ids: [...], eop: "31-12-2024", rules: [...]}``
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["upr_policy.manage"])]
+
+    def post(self, request):
+        import numpy as np
+        import pandas as pd
+
+        from module1_engine.engine import preprocess_dates
+        from module1_engine.upr_guard import evaluate_policy
+        from module1_engine.upr_methods import UprPolicy, unearned_fraction
+        from datasets.services.engine_adapter import dataset_to_dataframe
+
+        rules = request.data.get("rules")
+        if not isinstance(rules, list) or not rules:
+            raise ValidationError({"rules": "Provide a non-empty list of rules."})
+        try:
+            candidate = UprPolicy.from_dicts(rules)
+        except ValueError as exc:
+            raise ValidationError({"rules": str(exc)}) from exc
+
+        eop_raw = (request.data.get("eop") or "").strip()
+        if not eop_raw:
+            raise ValidationError({"eop": "Required, as dd-mm-yyyy."})
+        try:
+            eop = pd.to_datetime(eop_raw, format="%d-%m-%Y")
+        except (ValueError, TypeError) as exc:
+            raise ValidationError({"eop": "Must be dd-mm-yyyy."}) from exc
+
+        ids = request.data.get("premium_dataset_ids") or []
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError(
+                {"premium_dataset_ids": "Provide at least one premium dataset."}
+            )
+        datasets = _resolve_datasets(
+            request, ids=[str(i) for i in ids],
+            expected_kind=Dataset.Kind.PREMIUM,
+            field_name="premium_dataset_ids",
+        )
+
+        frames = [dataset_to_dataframe(ds) for ds in datasets]
+        df = pd.concat([f for f in frames if f is not None], ignore_index=True)
+        if df.empty:
+            raise ValidationError({"premium_dataset_ids": "The datasets contain no rows."})
+
+        for col in ("ISSUEDATE", "RiskStartDate", "RiskEndDate",
+                    "POLICYSTARTDATE", "POLICYENDDATE"):
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+        df["PREMIUMAMOUNT"] = pd.to_numeric(df["PREMIUMAMOUNT"], errors="coerce")
+        preprocess_dates(df)
+        df["Duration"] = pd.to_numeric(
+            (df["RiskEndDate"] - df["RiskStartDate"]).dt.days + 1, errors="coerce"
+        )
+
+        current = unearned_fraction(df, eop, UprPolicy()) * df["PREMIUMAMOUNT"]
+        proposed = unearned_fraction(df, eop, candidate) * df["PREMIUMAMOUNT"]
+        by_class = pd.DataFrame({
+            "RESERVINGCLASS": df["RESERVINGCLASS"].astype(str),
+            "current": np.nan_to_num(current.to_numpy(dtype=float)),
+            "proposed": np.nan_to_num(proposed.to_numpy(dtype=float)),
+        }).groupby("RESERVINGCLASS", dropna=False).sum().reset_index()
+
+        rows = []
+        for _, r in by_class.iterrows():
+            cur, prop = float(r["current"]), float(r["proposed"])
+            rows.append({
+                "reserving_class": r["RESERVINGCLASS"],
+                "current": cur,
+                "proposed": prop,
+                "delta": prop - cur,
+                "pct_delta": ((prop - cur) / abs(cur)) if abs(cur) > 1e-9 else None,
+                "method": candidate.resolve(
+                    r["RESERVINGCLASS"],
+                    (df.loc[df["RESERVINGCLASS"].astype(str) == r["RESERVINGCLASS"],
+                            "PRODUCTTYPE"].iloc[0]
+                     if "PRODUCTTYPE" in df.columns else ""),
+                ).method,
+            })
+
+        cur_total = float(by_class["current"].sum())
+        prop_total = float(by_class["proposed"].sum())
+        guards = [g.to_dict() for g in evaluate_policy(df, candidate, at_date=eop)]
+        return Response({
+            "eop": eop_raw,
+            "rows_examined": int(len(df)),
+            "rows": rows,
+            "totals": {
+                "current": cur_total,
+                "proposed": prop_total,
+                "delta": prop_total - cur_total,
+                "pct_delta": ((prop_total - cur_total) / abs(cur_total))
+                if abs(cur_total) > 1e-9 else None,
+            },
+            "guards": guards,
+            "blocked": any(g["blocked"] for g in guards),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic triangles at any grain (requirement 5)
+# ---------------------------------------------------------------------------
+
+
+class Module1TrianglesView(APIView):
+    """GET /api/module1/jobs/{pk}/triangles/?grain=monthly&reserving_class=...
+
+    Development triangles at monthly, quarterly or yearly grain, built from the job's own
+    snapshotted claim data. **Diagnostic only** — nothing here is written into the reserve
+    workbooks, and booking stays quarterly (see `core.grain`).
+
+    Every triangle reports its own credibility. On the reference book the monthly view is
+    `medium` at book level but `unusable` for several reserving classes — Banker's Blanket
+    has 3 non-empty cells from 6 claims — so the score is computed per triangle rather than
+    assumed from the grain.
+
+    ``?imply_cdf=1`` additionally returns the coarse-grain CDFs implied by developing each
+    fine cohort and summing the ultimates. That is the ONLY valid bridge between grains:
+    composing link ratios across grains is invalid, because a coarse accident period
+    aggregates fine cohorts at different maturities (measured +409% error).
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def get(self, request, pk):
+        from core.grain import DEFAULT_GRAIN, GRAIN_KEYS, get_grain
+        from module1_engine.triangles import build_triangle, implied_cdf_from_finer_grain
+
+        job = _get_accessible_job(request, pk)
+        if job.job_type != Module1Job.JobType.SUMMARY:
+            raise ValidationError(
+                {"detail": "Triangles are available for Reserve Summary jobs."}
+            )
+        if job.status != Module1Job.Status.SUCCESS:
+            raise ValidationError(
+                {"detail": "Triangles are available after the job succeeds."}
+            )
+
+        try:
+            grain = get_grain(request.query_params.get("grain"))
+        except ValueError as exc:
+            raise ValidationError({"grain": str(exc)}) from exc
+
+        meta = job.input_meta or {}
+        try:
+            start = pd.to_datetime(meta["exp_start"], format="%d-%m-%Y")
+            end = pd.to_datetime(meta["exp_end"], format="%d-%m-%Y")
+        except (KeyError, ValueError) as exc:
+            raise ValidationError(
+                {"detail": "This job did not record an experience period."}
+            ) from exc
+
+        paid = _triangle_source_frame(job)
+        if paid is None or paid.empty:
+            raise ValidationError(
+                {"detail": "This job's claims data is no longer available."}
+            )
+
+        rc = (request.query_params.get("reserving_class") or "").strip()
+        treaty = (request.query_params.get("treaty") or "").strip().upper()
+        if rc:
+            paid = paid[paid["RESERVINGCLASS"].astype(str) == rc]
+        if treaty in ("GROSS", "RI"):
+            paid = paid[paid["RI_TREATY_TYPE"].astype(str).str.upper() == treaty]
+
+        excluded = [
+            c for c in (request.query_params.get("excluded_claims") or "").split(",") if c
+        ]
+        triangle = build_triangle(
+            paid, grain=grain, start=start, end=end, excluded_claims=excluded or None
+        )
+        payload = {
+            "job_id": str(job.id),
+            "grains": list(GRAIN_KEYS),
+            "reserving_class": rc or None,
+            "treaty": treaty or None,
+            "triangle": triangle.to_dict(),
+        }
+
+        if request.query_params.get("imply_cdf") in ("1", "true", "yes"):
+            if grain is DEFAULT_GRAIN:
+                raise ValidationError({
+                    "imply_cdf": "Implied CDFs are derived from a FINER grain than the "
+                                 "booking basis; request grain=monthly."
+                })
+            coarse = build_triangle(paid, grain=DEFAULT_GRAIN, start=start, end=end,
+                                    excluded_claims=excluded or None)
+            allow = request.query_params.get("accept_low_credibility") in ("1", "true", "yes")
+            try:
+                implied = implied_cdf_from_finer_grain(
+                    triangle, coarse, fine_grain=grain, coarse_grain=DEFAULT_GRAIN,
+                    allow_low_credibility=allow,
+                )
+            except ValueError as exc:
+                raise ValidationError({"imply_cdf": str(exc)}) from exc
+            payload["implied"] = implied.to_dict()
+
+        return Response(payload)
+
+
+def _triangle_source_frame(job: Module1Job):
+    """The paid-claims frame a Summary job consumed.
+
+    Prefers the dataset snapshots (audit-grade, frozen at run time); falls back to the
+    staged upload folder while it still exists.
+    """
+    import pandas as pd
+
+    from module1_engine.engine import import_data
+
+    snap_ids = (job.input_meta or {}).get("dataset_snapshots", {}).get("claims_paid")
+    if snap_ids:
+        frames = [
+            pd.DataFrame(s.rows_payload)
+            for s in DatasetSnapshot.objects.filter(
+                id__in=snap_ids, organization=job.organization
+            )
+            if s.rows_payload
+        ]
+        if frames:
+            from datasets.services.columns import DB_TO_EXCEL_FOR_KIND
+
+            df = pd.concat(frames, ignore_index=True).rename(
+                columns=DB_TO_EXCEL_FOR_KIND[Dataset.Kind.CLAIMS_PAID]
+            )
+            if "Amount" not in df.columns and "AMOUNTPAID" in df.columns:
+                df["Amount"] = pd.to_numeric(df["AMOUNTPAID"], errors="coerce")
+            return df
+
+    folder = job_input_subdir(job, "claims_paid")
+    if folder.is_dir() and any(folder.glob("*.xlsx")):
+        return import_data(str(folder), "AMOUNTPAID", is_os=False)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Large claims (requirement 6)
+# ---------------------------------------------------------------------------
+
+
+class Module1PreflightView(APIView):
+    """POST /api/module1/preflight/
+
+    Reconcile reserving classes across premium / claims-paid / claims-OS **before** a job is
+    created, so a user never spends twelve minutes on a run that was doomed at submit.
+
+    Accepts the same inputs as the summary job — uploaded files and/or `*_dataset_ids` — and
+    creates nothing. The report it returns is produced by the same
+    `build_preflight_report` the Celery task enforces with, so what is shown here is exactly
+    what gates the run.
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def post(self, request):
+        import pandas as pd
+
+        from core.excel import READ_ENGINE
+        from module1_engine.engine import apply_class_aliases
+        from processing.services.preflight import build_preflight_report
+        from tenants.models import alias_map_for
+
+        org = get_request_org(request)
+
+        def _frames_for(field: str, dataset_field: str):
+            uploads = request.FILES.getlist(field)
+            frames = []
+            for upload in uploads:
+                try:
+                    frames.append(pd.read_excel(upload, engine=READ_ENGINE))
+                except Exception as exc:
+                    raise ValidationError(
+                        {field: f"Could not read '{upload.name}': {exc}"}
+                    ) from exc
+            raw_ids = (request.POST.get(dataset_field) or "").strip()
+            if raw_ids:
+                ids = [i.strip() for i in raw_ids.split(",") if i.strip()]
+                frames.extend(_dataset_frames(org, ids))
+            return pd.concat(frames, ignore_index=True) if frames else None
+
+        premium = _frames_for("premium", "premium_dataset_ids")
+        paid = _frames_for("claims_paid", "claims_paid_dataset_ids")
+        os_frame = _frames_for("claims_os", "claims_os_dataset_ids")
+
+        if premium is None and paid is None and os_frame is None:
+            raise ValidationError(
+                {"detail": "Provide premium, claims_paid and claims_os data to check."}
+            )
+
+        aliases = alias_map_for(org)
+        report = build_preflight_report(
+            apply_class_aliases(premium, aliases),
+            apply_class_aliases(paid, aliases),
+            apply_class_aliases(os_frame, aliases),
+        )
+        mode = getattr(org, "preflight_mode", "strict") if org else "strict"
+        return Response(
+            {
+                **report.as_dict(),
+                "mode": mode,
+                "aliases_applied": aliases,
+                # What the gate WILL do, so the UI does not have to re-derive the rule.
+                "would_block": report.blocking and mode != "permissive",
+            }
+        )
+
+
+def _dataset_frames(org, dataset_ids):
+    """Render the current rows of each dataset as a frame, for pre-flight only.
+
+    Reads the live dataset rather than a snapshot: pre-flight runs before a job exists, so
+    there is nothing snapshotted yet, and the point is to check what WOULD be frozen.
+    """
+    from datasets.models import Dataset
+    from datasets.services.engine_adapter import dataset_to_dataframe
+
+    frames = []
+    for dataset in Dataset.objects.filter(id__in=dataset_ids, organization=org):
+        frame = dataset_to_dataframe(dataset)
+        if frame is not None and len(frame):
+            frames.append(frame)
+    return frames
+
+
+class Module1LargeClaimsView(APIView):
+    """GET /api/module1/jobs/{pk}/large-claims/
+
+    The largest claims in a job's data, ranked inside an explicit slice.
+
+    Two rules are enforced here rather than left to the caller, because a naive reading gets
+    both wrong invisibly:
+
+    * **Paid is slice-scoped.** One row per (claim x head of damage x treaty x transaction),
+      so an unscoped sum adds GROSS to RI and nets Payment against Salvage.
+    * **Outstanding uses the latest as-at.** Summing snapshots multiply-counts one reserve —
+      measured 6.5x overstatement on the largest claim, and a different claim ranked first.
+
+    Query: ``kind`` (top_n|threshold), ``top_n``, ``threshold``, ``per_class``, ``treaty``,
+    ``head_of_damage``, ``rank_on`` (incurred|paid|outstanding).
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def get(self, request, pk):
+        from module1_engine.large_claims import (
+            DEFAULT_HEAD_OF_DAMAGE,
+            DEFAULT_TOP_N,
+            DEFAULT_TREATY,
+            MODES,
+            MODE_LABELS,
+            MODE_NOTES,
+            SELECTION_KINDS,
+            SELECT_TOP_N,
+            rank_claims,
+        )
+
+        job = _get_accessible_job(request, pk)
+        if job.job_type != Module1Job.JobType.SUMMARY:
+            raise ValidationError(
+                {"detail": "Large claims are available for Reserve Summary jobs."}
+            )
+        if job.status != Module1Job.Status.SUCCESS:
+            raise ValidationError(
+                {"detail": "Large claims are available after the job succeeds."}
+            )
+
+        q = request.query_params
+        kind = (q.get("kind") or SELECT_TOP_N).strip()
+        if kind not in SELECTION_KINDS:
+            raise ValidationError({"kind": f"Must be one of {list(SELECTION_KINDS)}."})
+        rank_on = (q.get("rank_on") or "incurred").strip()
+        if rank_on not in ("incurred", "paid", "outstanding"):
+            raise ValidationError(
+                {"rank_on": "Must be one of ['incurred', 'paid', 'outstanding']."}
+            )
+        try:
+            top_n = int(q.get("top_n") or DEFAULT_TOP_N)
+        except ValueError:
+            raise ValidationError({"top_n": "Must be a whole number."}) from None
+        if top_n < 1 or top_n > 500:
+            raise ValidationError({"top_n": "Must be between 1 and 500."})
+        threshold = q.get("threshold")
+        if kind == "threshold":
+            try:
+                threshold = float(threshold)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    {"threshold": "Threshold selection requires a numeric threshold."}
+                ) from None
+        else:
+            threshold = None
+
+        paid = _triangle_source_frame(job)
+        if paid is None or paid.empty:
+            raise ValidationError(
+                {"detail": "This job's claims data is no longer available."}
+            )
+        os_data = _os_source_frame(job)
+
+        report = rank_claims(
+            paid, os_data,
+            treaty=(q.get("treaty") or DEFAULT_TREATY).strip(),
+            head_of_damage=(q.get("head_of_damage") or DEFAULT_HEAD_OF_DAMAGE).strip() or None,
+            kind=kind, top_n=top_n, threshold=threshold,
+            per_class=q.get("per_class", "1") not in ("0", "false", "no"),
+            rank_on=rank_on,
+        )
+        return Response({
+            "job_id": str(job.id),
+            "report": report.to_dict(),
+            "rank_bases": ["incurred", "paid", "outstanding"],
+            "modes": [
+                {"key": m, "label": MODE_LABELS[m], "note": MODE_NOTES[m]} for m in MODES
+            ],
+        })
+
+
+def _os_source_frame(job: Module1Job):
+    """The outstanding-claims frame a Summary job consumed, snapshot-first."""
+    import pandas as pd
+
+    from module1_engine.engine import import_data
+
+    snap_ids = (job.input_meta or {}).get("dataset_snapshots", {}).get("claims_os")
+    if snap_ids:
+        frames = [
+            pd.DataFrame(s.rows_payload)
+            for s in DatasetSnapshot.objects.filter(
+                id__in=snap_ids, organization=job.organization
+            )
+            if s.rows_payload
+        ]
+        if frames:
+            from datasets.services.columns import DB_TO_EXCEL_FOR_KIND
+
+            df = pd.concat(frames, ignore_index=True).rename(
+                columns=DB_TO_EXCEL_FOR_KIND[Dataset.Kind.CLAIMS_OS]
+            )
+            if "Amount" not in df.columns and "AMOUNTOUTSTANDING" in df.columns:
+                df["Amount"] = pd.to_numeric(df["AMOUNTOUTSTANDING"], errors="coerce")
+            return df
+
+    folder = job_input_subdir(job, "claims_os")
+    if folder.is_dir() and any(folder.glob("*.xlsx")):
+        return import_data(str(folder), "AMOUNTOUTSTANDING", is_os=True)
+    return None

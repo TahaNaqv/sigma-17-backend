@@ -44,6 +44,51 @@ book; the sections below are the as-built design, not a proposal.
 | `src/state/wizards/sensitivity.ts` | new wizard slice |
 | `src/App.tsx`, `AppSidebar.tsx`, `api/{module1,module2,processing,jobDrafts}.ts` | route, nav, job-type labels, `DraftKey` |
 
+**Post-build gap closure (same day)**
+
+A completeness pass after the first build found four gaps, all now closed:
+
+1. **Process scope was unreachable from the UI.** The page read `processJobId` but
+   never set it — choosing "Process" produced a guaranteed task failure. Added the
+   chained-job picker (mirroring Movement Analysis), inheriting Previous Period,
+   Expense CF and the accounting period; `canRun` now blocks the impossible run.
+2. **Processing History routed the new job type to Module 1 endpoints**, so preview
+   and download would 404. Extracted `isModule2Job()` — the two call sites had the
+   list inline and had *already* drifted, so `module2_movement` was broken too. That
+   pre-existing bug is fixed by the same change.
+3. **Process scope had no end-to-end coverage.** Added two task-level tests: one
+   inheriting inputs from a chained process job's durable archive (asserting the
+   LIC/LRC BOP invariance through the real task), one asserting the missing-input
+   failure names *Previous Period* rather than "check workbook formats".
+4. **The UI had never been rendered.** Added `SensitivityMatrix.test.tsx` (8 render
+   tests). It caught a missing `TooltipProvider` in the harness and jsdom's absent
+   `ResizeObserver` / element geometry, both now handled in `src/test/setup.ts` so
+   any future chart component is testable.
+
+**Second gap-closure pass**
+
+Re-auditing against this plan's own §5 found three more, all closed:
+
+5. **The golden this plan promised did not exist.** Added the `m2_sensitivity_ref` fixture and
+   an `m2_sensitivity` dispatch in `processing/benchmarks.py`, frozen at the **measure** level
+   (base + 12 scenario frames) rather than at the rendered workbook — so a diff points at the
+   measure and scenario that moved, not at a cell address. Verified it actually guards:
+   flipping the RA lever from relative to absolute fails the golden immediately.
+6. **A runner without `scenarios.view` could not read the sets they needed to run.** `HasPermission`
+   is ANY-of, so the read endpoints now accept `["scenarios.view", "module2.run"]`; writes still
+   require `scenarios.manage`. Regression test added — this only bites orgs with custom roles,
+   which is exactly where it would have gone unnoticed.
+7. **Dead `useInline` / `inlineScenarios` wizard state** implied an inline-scenario feature no UI
+   exposed. Removed. (The API still accepts inline scenarios; runs go through saved, versioned
+   sets so they stay reproducible.)
+
+**Deployment steps performed**
+
+`manage.py migrate` (processing 0006/0007, tenants 0003), `seed_rbac --force`
+(adds `scenarios.view` / `scenarios.manage` to existing roles), and
+`seed_scenarios` (the 12-scenario default ladder). All three are required on every
+environment; the feature is inert without them.
+
 **Verification**
 
 * 225 Django tests pass (2 pre-existing Redis-broker failures unrelated to this work,

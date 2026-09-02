@@ -74,6 +74,16 @@ def _read_workbook_rows(file_bytes: bytes, kind: str) -> list[dict]:
     except Exception as exc:
         raise ExcelImportError(f"Could not parse Excel file: {exc}") from exc
 
+    # Payment patterns are WIDE in Excel (one column per development period, unbounded)
+    # and LONG in the database, so they cannot go through the static header map.
+    if kind == Dataset.Kind.PAYMENT_PATTERN:
+        from .wide_pattern import PatternShapeError, wide_to_long
+
+        try:
+            return wide_to_long(df)
+        except PatternShapeError as exc:
+            raise ExcelImportError(str(exc)) from exc
+
     # Track which expected columns weren't found; bail if the file is
     # missing a column we consider required.
     present_excel = set(df.columns)

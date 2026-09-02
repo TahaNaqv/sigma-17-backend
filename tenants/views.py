@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -211,7 +212,14 @@ class ScenarioSetListCreateView(APIView):
 
     def get_permissions(self):
         from accounts.permissions import HasPermission
-        need = ["scenarios.view"] if self.request.method == "GET" else ["scenarios.manage"]
+        # HasPermission is ANY-of. Reading the sets is a prerequisite for running a
+        # sensitivity job, so `module2.run` alone must be enough — otherwise an org
+        # with custom roles gets a runner who cannot see what to run.
+        need = (
+            ["scenarios.view", "module2.run"]
+            if self.request.method == "GET"
+            else ["scenarios.manage"]
+        )
         return [IsAuthenticated(), HasPermission(need)]
 
     def _org(self, request):
@@ -247,7 +255,11 @@ class ScenarioSetDetailView(APIView):
 
     def get_permissions(self):
         from accounts.permissions import HasPermission
-        need = ["scenarios.view"] if self.request.method == "GET" else ["scenarios.manage"]
+        need = (
+            ["scenarios.view", "module2.run"]
+            if self.request.method == "GET"
+            else ["scenarios.manage"]
+        )
         return [IsAuthenticated(), HasPermission(need)]
 
     def _get(self, request, pk):
@@ -297,4 +309,225 @@ class ScenarioSetDetailView(APIView):
         obj = self._get(request, pk)
         obj.is_active = False
         obj.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# UPR method policy (requirement 4)
+# ---------------------------------------------------------------------------
+
+
+def _upr_permissions(method: str):
+    from accounts.permissions import HasPermission
+
+    # HasPermission is ANY-of. Reading the policy is a prerequisite for running a job, so
+    # `module1.run` alone must be enough to READ — otherwise an org with custom roles gets
+    # a runner who cannot see which methodology their own run will use.
+    need = (
+        ["upr_policy.view", "module1.run"]
+        if method == "GET"
+        else ["upr_policy.manage"]
+    )
+    return [IsAuthenticated(), HasPermission(need)]
+
+
+class UprMethodPolicyListCreateView(APIView):
+    """GET/POST /api/upr-policies/ — the org's UPR earning-method policies."""
+
+    def get_permissions(self):
+        return _upr_permissions(self.request.method)
+
+    def _org(self, request):
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("Select an organization first.")
+        return org
+
+    def get(self, request):
+        from .models import UprMethodPolicy
+        from .serializers import UprMethodPolicySerializer
+
+        qs = UprMethodPolicy.objects.filter(organization=self._org(request))
+        if request.query_params.get("all") not in ("1", "true", "yes"):
+            qs = qs.filter(is_active=True)
+        return Response(
+            {"results": UprMethodPolicySerializer(qs.prefetch_related("rules"), many=True).data}
+        )
+
+    def post(self, request):
+        from .serializers import UprMethodPolicySerializer
+
+        ser = UprMethodPolicySerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        obj = ser.save(organization=self._org(request), created_by=request.user)
+        return Response(UprMethodPolicySerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+class UprMethodPolicyDetailView(APIView):
+    """GET / PUT / DELETE one policy.
+
+    PUT **forks a new version** rather than mutating in place: jobs reference the version
+    they ran under, and a reserving basis must stay reproducible after the policy changes.
+    """
+
+    def get_permissions(self):
+        return _upr_permissions(self.request.method)
+
+    def _get(self, request, pk):
+        from .models import UprMethodPolicy
+
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("Select an organization first.")
+        return get_object_or_404(UprMethodPolicy, pk=pk, organization=org)
+
+    def get(self, request, pk):
+        from .serializers import UprMethodPolicySerializer
+
+        return Response(UprMethodPolicySerializer(self._get(request, pk)).data)
+
+    @transaction.atomic
+    def put(self, request, pk):
+        from .models import UprMethodPolicy, UprMethodRule
+        from .serializers import UprMethodPolicySerializer
+
+        current = self._get(request, pk)
+        ser = UprMethodPolicySerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        rules = ser.validated_data.pop("rules", [])
+
+        next_version = (
+            UprMethodPolicy.objects.filter(
+                organization=current.organization, name=current.name
+            ).order_by("-version").first().version + 1
+        )
+        # Deactivate first — the partial unique constraint allows one active per name.
+        UprMethodPolicy.objects.filter(
+            organization=current.organization, name=current.name, is_active=True
+        ).update(is_active=False)
+        new = UprMethodPolicy.objects.create(
+            organization=current.organization,
+            name=current.name,
+            description=ser.validated_data.get("description", current.description),
+            note=ser.validated_data.get("note", ""),
+            version=next_version,
+            is_active=True,
+            created_by=request.user,
+        )
+        UprMethodRule.objects.bulk_create(
+            [UprMethodRule(policy=new, order=i, **r) for i, r in enumerate(rules)]
+        )
+        return Response(UprMethodPolicySerializer(new).data)
+
+    def delete(self, request, pk):
+        obj = self._get(request, pk)
+        obj.is_active = False
+        obj.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class UprMethodCatalogView(APIView):
+    """GET /api/upr-methods/ — the method registry, so the UI never hard-codes it."""
+
+    def get_permissions(self):
+        return _upr_permissions("GET")
+
+    def get(self, request):
+        from module1_engine.upr_methods import MATCH_MODES, METHODS
+
+        return Response({
+            "methods": [
+                {
+                    "key": m.key,
+                    "label": m.label,
+                    "description": m.description,
+                    "selfGatesOnExpiry": m.self_gates_on_expiry,
+                    "needsGuard": not m.self_gates_on_expiry,
+                    "params": list(m.params_schema),
+                }
+                for m in METHODS.values()
+            ],
+            "matchModes": list(MATCH_MODES),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Reserving-class aliases (WP0)
+# ---------------------------------------------------------------------------
+
+
+def _alias_permissions(method):
+    """Reading an alias is part of running a job; changing one is an org-admin act.
+
+    An alias decides which claims enter a reserve, so writing it is gated behind
+    `class_alias.manage` — held by Actuary and Org Admin — rather than by `module1.run`,
+    which every Analyst has.
+    """
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return [IsAuthenticated(), HasOrgPermission(["class_alias.view", "class_alias.manage"])]
+    return [IsAuthenticated(), HasOrgPermission(["class_alias.manage"])]
+
+
+class ReservingClassAliasListCreateView(APIView):
+    """GET/POST /api/class-aliases/ — the org's reserving-class alias map."""
+
+    def get_permissions(self):
+        return _alias_permissions(self.request.method)
+
+    def _org(self, request):
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("Select an organization first.")
+        return org
+
+    def get(self, request):
+        from .models import ReservingClassAlias
+        from .serializers import ReservingClassAliasSerializer
+
+        qs = ReservingClassAlias.objects.filter(organization=self._org(request))
+        return Response({"results": ReservingClassAliasSerializer(qs, many=True).data})
+
+    def post(self, request):
+        from .models import ReservingClassAlias
+        from .serializers import ReservingClassAliasSerializer
+
+        org = self._org(request)
+        ser = ReservingClassAliasSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        alias = ReservingClassAlias(
+            organization=org,
+            alias=ser.validated_data["alias"],
+            canonical=ser.validated_data["canonical"],
+            note=ser.validated_data.get("note", ""),
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+        try:
+            alias.full_clean(exclude=["alias_key"])
+        except DjangoValidationError as exc:
+            raise ValidationError({"detail": exc.messages}) from exc
+        try:
+            alias.save()
+        except IntegrityError as exc:
+            raise ValidationError(
+                {"alias": f"'{alias.alias}' already has an alias in this organization."}
+            ) from exc
+        return Response(
+            ReservingClassAliasSerializer(alias).data, status=status.HTTP_201_CREATED
+        )
+
+
+class ReservingClassAliasDetailView(APIView):
+    """DELETE /api/class-aliases/<id>/ — remove one alias."""
+
+    def get_permissions(self):
+        return _alias_permissions(self.request.method)
+
+    def delete(self, request, alias_id):
+        from .models import ReservingClassAlias
+
+        org = get_request_org(request)
+        if org is None:
+            raise PermissionDenied("Select an organization first.")
+        alias = get_object_or_404(ReservingClassAlias, pk=alias_id, organization=org)
+        alias.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

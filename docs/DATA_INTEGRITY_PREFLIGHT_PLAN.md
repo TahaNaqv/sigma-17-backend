@@ -4,7 +4,7 @@
 > input file spells a reserving class differently from another. Detect, report and **block** input
 > defects before the engine runs, instead of emitting a plausible-looking workbook full of zeros.
 
-Status: planned (2026-08-21). Decisions: `docs/CLIENT_REQUIREMENTS_DECISIONS.md` §2 F1/F4, §5.
+Status: **implemented 2026-09-02** (see §9). Decisions: `docs/CLIENT_REQUIREMENTS_DECISIONS.md` §2 F1/F4, §5.
 Priority: **P0 — blocks WP1-WP7.**
 
 ---
@@ -219,3 +219,97 @@ twelve minutes on a job that was doomed at submit.
 ## 8. Estimate
 
 Backend 2.5d, frontend 1.5d, tests 1d, golden re-capture and validation 0.5d. **~5.5 days.**
+
+---
+
+## 9. Implementation status — built (2026-09-02)
+
+Implemented and tested. F1 is fixed and both states of it are pinned by goldens.
+
+### 9.1 The measured result
+
+Same inputs, one alias:
+
+| | Health paid reaching the reserve |
+|---|---|
+| today's behaviour | **0** |
+| with `Health → Health Insurance` | **35,402,487** |
+
+(35,503,674 is the total in the file; 35,402,487 is the part inside the 2016–2017 experience
+period, which is what the engine consumes.) `test_class_alias_effect.py` asserts both, and
+asserts that **no other class moves** — an alias that changed anything beyond the two spellings
+of one name would be doing more than joining them.
+
+### 9.2 Two corrections to the plan, both found by measuring
+
+**The near-match scorer in §2 does not work.** The plan states difflib surfaces
+`("Health", "Health Insurance", 0.82)`. Measured, `SequenceMatcher` scores that pair **0.545**
+— below any usable threshold, so the one pairing this feature exists to propose would never
+have been offered. Insurance class names differ overwhelmingly by a *qualifier* (one name is
+the other plus a word), so `core.normalize.match_score` leads with that shape and keeps
+sequence similarity as a last resort. On the reference book it produces exactly one
+non-identical pairing — the true one — and no false positives.
+
+**Aliases cannot be applied by "rewriting the staged frames".** §2 proposed that, and it
+cannot work for the file-upload path, which is the primary one: uploaded workbooks are staged
+as *files* and read straight from the folder by the engine, so there is no intermediate frame.
+`_materialize_job_snapshots` is a no-op for uploads. Aliases are therefore applied at the
+engine's read boundary through a new `class_aliases` parameter — the same shape as
+`upr_policy`, `exclusion` and `run_report` before it. `None` leaves every frame untouched,
+which is what keeps existing goldens bit-identical.
+
+A third, smaller one: `canonical_key` must **delete** apostrophes rather than treat them as
+word breaks, or `Banker's Blanket` and `Bankers Blanket` fail to reconcile. Caught by its own
+test.
+
+### 9.3 Severity choices, and why `warn` matters as much as `error`
+
+* **error** — rows will be discarded, or a class will develop with no paid claims. Both
+  produce a plausible workbook containing a wrong number.
+* **warn** — a class has premium and no claims at all (`D&O`). Legitimate for a class with no
+  experience, so it must never block. An error here would train users into permissive mode and
+  the gate would stop meaning anything.
+
+`dropped_amount` uses the engine's own recovery substitution, not a raw `AMOUNTPAID` sum, so
+the headline figure is the value the engine would actually have consumed.
+
+### 9.4 What the user sees when a run is blocked
+
+> Input check failed, so no workbooks were produced. 3,044 claim rows worth 35,503,674 would
+> be discarded because their reserving class does not appear in the premium data. Affected
+> classes: Health, Health Insurance. Adding the alias 'Health' → 'Health Insurance' would
+> resolve this. Fix the input files, add a reserving-class alias, or ask an administrator to
+> switch this organization to permissive mode.
+
+The size, the classes, and the fix. In the UI the same report renders at the review step —
+before submit — with the reconciliation table putting premium / paid / OS row counts side by
+side, and Generate disabled while `would_block` is true.
+
+### 9.5 Files
+
+| | |
+|---|---|
+| `core/normalize.py` | **new** — `canonical_key`, `match_score`, `suggest_matches` |
+| `processing/services/preflight.py` | **new** — `build_preflight_report`, severities, `dropped_amount` |
+| `module1_engine/engine.py` | `apply_class_aliases`; `class_aliases` parameter |
+| `processing/tasks.py` | `_run_preflight`, `PreflightBlocked`, the gate, report persisted every run |
+| `processing/views.py` | `Module1PreflightView`; `_attach_class_aliases` snapshots the map onto the job |
+| `tenants/models.py` + migration `0005` | `ReservingClassAlias`, `Organization.preflight_mode`, `alias_map_for` |
+| `tenants/views.py`, `serializers.py`, `urls.py` | alias CRUD behind `class_alias.manage` |
+| `accounts/.../seed_rbac.py` | `class_alias.view` / `class_alias.manage`; Actuary manages, Analyst views |
+| `benchmarks/fixtures/summary_ref_aliased` | the corrected-behaviour golden |
+| `src/components/PreflightReport.tsx` + test | the report, alias suggestions, reconciliation table |
+| `src/pages/SummaryGeneratorPage.tsx` | runs at step 3, blocks Generate, one-click alias |
+
+### 9.6 Verification
+
+* `pytest module1_engine/tests` — **139 passed**, 10 goldens green (both summary states).
+* `manage.py test processing datasets accounts tenants` — **328/330**; the two failures are
+  `test_dataset_e2e`, which need a reachable Celery broker. On this machine host port 6379 is
+  held by another project's password-protected Redis, so `.delay()` raises
+  `AuthenticationError` regardless of these changes.
+* `vitest` — **282 passed**. `tsc` at its unchanged 45-error baseline.
+
+**Not verified:** no live-stack run. The local Sigma 17 containers are up but orphaned —
+`sigma17-celery` cannot resolve its broker and has been retrying for ~50 minutes — so nothing
+has been exercised through the real API + queue path.

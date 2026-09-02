@@ -67,6 +67,28 @@ def _snapshot_to_dataframe(snapshot: DatasetSnapshot) -> pd.DataFrame:
     return df.rename(columns=excel_columns)
 
 
+def dataset_to_dataframe(dataset) -> pd.DataFrame:
+    """Live dataset rows as a DataFrame with engine-expected headers.
+
+    The snapshot path (`_snapshot_to_dataframe`) covers jobs, which must read frozen rows.
+    This reads the CURRENT rows and exists for previews that run *before* a job — notably
+    the UPR impact preview, which must answer "what would this policy do to my book?"
+    without creating one.
+    """
+    from ..models import ROW_MODEL_FOR_KIND
+
+    excel_columns = DB_TO_EXCEL_FOR_KIND[dataset.kind]
+    model = ROW_MODEL_FOR_KIND.get(dataset.kind)
+    if model is None:
+        return pd.DataFrame(columns=list(excel_columns.values()))
+    rows = list(
+        model.objects.filter(dataset=dataset).values(*excel_columns.keys())
+    )
+    if not rows:
+        return pd.DataFrame(columns=list(excel_columns.values()))
+    return pd.DataFrame(rows).rename(columns=excel_columns)
+
+
 def _snapshot_to_xlsx_bytes(
     snapshot: DatasetSnapshot,
     *,

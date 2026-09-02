@@ -41,6 +41,11 @@ class Dataset(models.Model):
         # Recovery Components, RI non-performance provision, PDR/RI Accrual Reserve
         # BOP, RI finance P&L). Consumed by module2_engine/movement, not the core engine.
         MOVEMENT_OVERRIDE = "ifrs17_movement_override", "IFRS 17 Movement Override (RI)"
+        # Actuary-supplied payment pattern (requirement 2). Stored LONG — one row per
+        # (class, development period) — while the Excel template is WIDE, because a
+        # pattern has an unbounded number of development periods and a wide table is a
+        # poor relational schema. The importer unpivots; nothing else sees the wide form.
+        PAYMENT_PATTERN = "payment_pattern", "Payment Pattern"
 
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
@@ -227,6 +232,12 @@ class PremiumRow(_BaseRow):
 class ClaimsPaidRow(_BaseRow):
     """One row of claims paid data. Maps to the Excel `claims_paid` files."""
 
+    # Claim identity. Optional, because historic datasets were imported before large-claim
+    # exclusion existed and must keep loading — but without it a dataset-driven job cannot
+    # exclude anything, which the UI states rather than failing silently.
+    claim_number = models.CharField(max_length=128, blank=True, db_index=True)
+    reported_date = models.DateField(null=True, blank=True)
+
     amount_paid = models.DecimalField(
         max_digits=18, decimal_places=2, null=True, blank=True
     )  # AMOUNTPAID
@@ -255,6 +266,9 @@ class ClaimsOSRow(_BaseRow):
     `as_at` is the snapshot-date column the engine reads as "As at" (note
     the space in the Excel header). We expose it as snake_case here.
     """
+
+    claim_number = models.CharField(max_length=128, blank=True, db_index=True)
+    reported_date = models.DateField(null=True, blank=True)
 
     amount_outstanding = models.DecimalField(
         max_digits=18, decimal_places=2, null=True, blank=True
@@ -470,6 +484,30 @@ class MovementOverrideRow(_BaseRow):
 
 # Kind → row model lookup. Adapter and serializers use this to route to
 # the right table without an if/elif chain.
+class PaymentPatternRow(_BaseRow):
+    """One (reserving class, development period) weight of a payment pattern.
+
+    ``dev_period`` is 0-based **from inception** — period 0 is the period the claim is
+    incurred. Weights are normalised to sum 1 per class when the override is built; they
+    are stored as supplied so the user's own numbers round-trip unchanged.
+    """
+
+    reserving_class = models.CharField(max_length=128, db_index=True)
+    dev_period = models.IntegerField()
+    weight = models.DecimalField(max_digits=18, decimal_places=10, null=True, blank=True)
+
+    class Meta(_BaseRow.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dataset", "reserving_class", "dev_period"],
+                name="uniq_pattern_class_period",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["dataset", "reserving_class"]),
+        ]
+
+
 ROW_MODEL_FOR_KIND = {
     Dataset.Kind.PREMIUM: PremiumRow,
     Dataset.Kind.CLAIMS_PAID: ClaimsPaidRow,
@@ -478,6 +516,7 @@ ROW_MODEL_FOR_KIND = {
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PreviousPeriodLicRow,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PreviousPeriodUprRow,
     Dataset.Kind.MOVEMENT_OVERRIDE: MovementOverrideRow,
+    Dataset.Kind.PAYMENT_PATTERN: PaymentPatternRow,
 }
 
 

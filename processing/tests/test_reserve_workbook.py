@@ -635,3 +635,129 @@ class ReserveWorkbookServiceTests(TestCase):
             )
         finally:
             shutil.rmtree(dest, ignore_errors=True)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class TriangleBlockReadingTests(TestCase):
+    """WP1: locating the age-to-age block by label instead of by row arithmetic."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="BlkOrg")
+        self.user = User.objects.create_user(username="blk", password="testpass123")
+
+    @staticmethod
+    def _workbook(*, labelled=True):
+        """A sheet shaped like the engine's output, with or without WP1 block labels."""
+        from openpyxl import Workbook as _WB
+        from openpyxl.utils import get_column_letter
+
+        wb = _WB()
+        ws = wb.active
+        ws.title = "Paid Claims Triangle"
+        ws.append(["Accident Period", "0", "1", "2"])   # 1   incremental header
+        ws.append(["2017-Q1", 10, 20, 30])              # 2
+        ws.append(["2017-Q2", 40, 50, None])            # 3
+        ws.append([])                                   # 4
+        ws.append([("Cumulative Triangle" if labelled else None)])   # 5
+        ws.append(["Accident Period", "0", "1", "2"])   # 6   cumulative header
+        ws.append(["2017-Q1", 10, 30, 60])              # 7
+        ws.append(["2017-Q2", 40, 0, None])             # 8   cumulative fell -> real 0 factor
+        ws.append([])                                   # 9
+        ws.append([("Age-to-Age Factors" if labelled else None)])    # 10
+        ws.append(["Accident Period", "0", "1", "2"])   # 11  a2a header
+        ws.append(["2017-Q1", 3.0, 2.0, None])          # 12
+        ws.append(["2017-Q2", 0.0, None, None])         # 13  a real zero, not a gap
+        ws.append([])                                   # 14
+        ws.append(["Accident Period", "0", "1", "2"])   # 15  benchmark header
+        ws.append(["Simple Avg LDF", 1.5, 2.0, None])   # 16
+        ws.append(["Factor Count", 2, 1, 0])            # 17
+        ws.append([])                                   # 18
+        ldf_row = 19
+        ws.append(["Selected LDF", "=1", "=1", "=1"])   # 19
+        last = get_column_letter(4)
+        ws.append(["Selected CDF"] + [
+            f"=PRODUCT({get_column_letter(2 + c)}{ldf_row}:{last}{ldf_row})" for c in range(3)
+        ])                                              # 20
+        wb.create_sheet("Reported Triangle").append(["Accident Period", "0"])
+        wb.create_sheet("Reserve Summary")
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def _read(self, *, labelled=True):
+        job = _make_source_job(
+            user=self.user, org=self.org,
+            zip_bytes=_zip_with({"Motor TP GROSS 2024-12.xlsx": self._workbook(labelled=labelled)}),
+        )
+        payload = read_workbook_cdfs(job, "Motor TP GROSS 2024-12.xlsx")
+        return next(t for t in payload["triangles"] if t["sheet"] == "Paid Claims Triangle")
+
+    def test_blocks_are_located_by_label(self):
+        blocks = self._read()["blocks"]
+        self.assertEqual(blocks["Cumulative Triangle"]["header_row"], 6)
+        self.assertEqual(blocks["Age-to-Age Factors"]["header_row"], 11)
+        self.assertEqual(blocks["Age-to-Age Factors"]["first_row"], 12)
+        self.assertEqual(blocks["Age-to-Age Factors"]["last_row"], 13)
+
+    def test_the_leading_block_is_named_by_sheet_not_by_a_label(self):
+        """A label on row 1 would become the pandas header and degrade every golden frame,
+        so the opening block is identified by sheet name instead."""
+        blocks = self._read()["blocks"]
+        self.assertEqual(blocks["Incremental Triangle"]["header_row"], 1)
+        self.assertEqual(blocks["Incremental Triangle"]["last_row"], 3)
+
+    def test_the_a2a_block_stops_before_the_benchmark_rows(self):
+        """The benchmark header repeats 'Accident Period'; the block must not swallow it."""
+        triangle = self._read()
+        self.assertEqual(triangle["a2a_row_labels"], ["2017-Q1", "2017-Q2"])
+        self.assertEqual(len(triangle["a2a_matrix"]), 2)
+
+    def test_a2a_matrix_keeps_blank_and_zero_distinct(self):
+        """A blank is an undefined factor; a zero is real data (cumulative paid can fall
+        through the Motor recovery substitution). Coercing either way loses information."""
+        matrix = self._read()["a2a_matrix"]
+        self.assertEqual(matrix[0], [3.0, 2.0, None])
+        self.assertEqual(matrix[1][0], 0.0)
+        self.assertIsNone(matrix[1][1])
+
+    def test_the_cumulative_block_is_served_for_volume_weighting(self):
+        """Volume weighting is a ratio of cumulative sums; it cannot be recovered from the
+        age-to-age factors alone, so the cumulative block travels with them."""
+        triangle = self._read()
+        self.assertEqual(triangle["cumulative_matrix"], [[10, 30, 60], [40, 0, None]])
+
+    def test_the_served_a2a_matrix_is_what_the_cumulative_block_implies(self):
+        """The client recomputes averages from `cumulative_matrix`; if that disagreed with the
+        `a2a_matrix` the workbook displays, the preview would not equal the output."""
+        from module1_engine.averages import age_to_age_matrix
+        import numpy as np
+
+        triangle = self._read()
+        cumulative = np.array(
+            [[np.nan if v is None else v for v in row] for row in triangle["cumulative_matrix"]],
+            dtype=float,
+        )
+        implied = age_to_age_matrix(cumulative)
+        for i, row in enumerate(triangle["a2a_matrix"]):
+            for j, value in enumerate(row):
+                if value is None:
+                    self.assertTrue(np.isnan(implied[i, j]), f"cell ({i},{j})")
+                else:
+                    self.assertAlmostEqual(value, float(implied[i, j]), places=9)
+
+    def test_a_legacy_workbook_without_labels_degrades_rather_than_guessing(self):
+        """Workbooks produced before WP1 carry no block labels. The reader returns only the
+        leading block and no a2a matrix, so the UI hides the bases it cannot compute instead
+        of averaging the wrong rows."""
+        triangle = self._read(labelled=False)
+        self.assertEqual(set(triangle["blocks"]), {"Incremental Triangle"})
+        self.assertEqual(triangle["a2a_matrix"], [])
+        self.assertEqual(triangle["cumulative_matrix"], [])
+        # The Selected rows are still found — the existing editing path keeps working.
+        self.assertEqual(triangle["ldf_row"], 19)
+        self.assertEqual(triangle["cdf_row"], 20)

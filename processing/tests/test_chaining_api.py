@@ -352,6 +352,71 @@ class Module1ChainingTests(TestCase):
         mocked_delay.assert_called_once()
 
     @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_records_the_ldf_selection_behind_the_override(self, mocked_delay):
+        """WP1 audit trail. The engine consumes the derived vector; a reviewer needs the
+        judgement — which basis, which factors struck out, and how many each column actually
+        averaged. `factor_counts` is what distinguishes "chose a 4-period average" from
+        "chose a label that silently did nothing"."""
+        source = _make_successful_source(user=self.user, org=self.org)
+        overrides = {"Motor TP GROSS 2024-12.xlsx": {"Paid Claims Triangle": [1.05, 1.0]}}
+        selection = {
+            "Motor TP GROSS 2024-12.xlsx": {
+                "Paid Claims Triangle": {
+                    "basis": "ex_hi_lo",
+                    "excluded_cells": [[2, 0]],
+                    "factor_counts": [1, 0],
+                    "derived_ldf": [1.05, 1.0],
+                    "applied_at": "2026-09-01T10:14:03Z",
+                }
+            }
+        }
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {
+                "source_job_id": str(source.id),
+                "ldf_overrides": json.dumps(overrides),
+                "ldf_selection": json.dumps(selection),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertEqual(job.input_meta["ldf_selection"], selection)
+        self.assertEqual(job.input_meta["ldf_overrides"], overrides)
+        mocked_delay.assert_called_once()
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_update_reserve_rejects_a_malformed_ldf_selection(self, mocked_delay):
+        source = _make_successful_source(user=self.user, org=self.org)
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {
+                "source_job_id": str(source.id),
+                "ldf_overrides": json.dumps({"f.xlsx": {"Paid Claims Triangle": [1.0]}}),
+                "ldf_selection": "not json",
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
+    def test_the_ldf_selection_is_optional(self, mocked_delay):
+        """A hand-typed LDF row carries no basis; the override must still be accepted."""
+        source = _make_successful_source(user=self.user, org=self.org)
+        res = self.client.post(
+            "/api/module1/jobs/update-reserve/",
+            {
+                "source_job_id": str(source.id),
+                "ldf_overrides": json.dumps({"f.xlsx": {"Paid Claims Triangle": [1.0]}}),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertNotIn("ldf_selection", job.input_meta)
+
+    @patch("processing.views.run_module1_update_reserve_task.delay")
     def test_update_reserve_ldf_overrides_require_source(self, mocked_delay):
         res = self.client.post(
             "/api/module1/jobs/update-reserve/",

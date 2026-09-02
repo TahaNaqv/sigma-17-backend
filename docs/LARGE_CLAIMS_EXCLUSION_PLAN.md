@@ -4,7 +4,7 @@
 > out, and rebuild the triangles and factors without them — with the excluded exposure accounted for
 > explicitly rather than silently dropped.
 
-Status: planned (2026-08-21). Decisions: `docs/CLIENT_REQUIREMENTS_DECISIONS.md` §3 D5.
+Status: planned (2026-09-01), **verified against the reference book**. Decisions: `docs/CLIENT_REQUIREMENTS_DECISIONS.md` §3 D5.
 Requirement 6. Depends on WP0 and WP1 (reuses `TriangleGrid`).
 
 ---
@@ -14,37 +14,92 @@ Requirement 6. Depends on WP0 and WP1 (reuses `TriangleGrid`).
 > "Summary of high/top 10 claims paid and OS in the data, and a functionality if we remove those in
 > our experience, triangles should be adjusted through a strikethrough feature"
 
-## 1. How it works today
+## 1. Verified ground truth
 
-### 1.1 The claim identifier is discarded at the door
+Measured against the client reference book; the measurements are reproduced so a reviewer
+can re-run them.
 
-`import_data` (`module1_engine/engine.py`) reads a fixed column list:
+### 1.1 Claim identity does not exist in the system yet
 
-```python
-needed_columns = ['AMOUNTPAID','AMOUNTRECOVERED','ISSUEDATE','LOSSDATE','PAYMENTDATE',
-                  'RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE']
-```
+`import_data` reads a fixed column list that omits `CLAIMNUMBER`, and
+`ClaimsPaidRow` / `ClaimsOSRow` have no such field. The column **is present in the source
+files** — verified — but never reaches a DataFrame. `REPORTEDDATE` is likewise present and
+discarded. Everything downstream is an aggregate.
 
-`CLAIMNUMBER` **is present in the source files** — verified in
-`benchmarks/fixtures/summary_ref/` — but is not in the list, so it never reaches a DataFrame.
-`ClaimsPaidRow` / `ClaimsOSRow` have no claim-number field either. `REPORTEDDATE` is likewise present
-and discarded.
+Confirmed still true today: `module1_engine.triangles` degrades to a warning
+("no CLAIMNUMBER column") when handed exclusions on a frame from `import_data`.
 
-Claim identity therefore does not exist anywhere in the system today. Everything downstream is an
-aggregate.
-
-### 1.2 The data grain (measured, not assumed)
+### 1.2 The data grain, measured
 
 | File | Grain | Evidence |
 |---|---|---|
-| Claims paid | `(claim × head of damage × treaty type × transaction)` | 6,580 rows / 1,645 claims; 3,290 single-transaction slices and 1,645 two-transaction slices |
-| Claims OS | `(claim × as-at × treaty type)` | 6,272 rows / 1,685 claims; exactly 2 rows per `(claim, as-at)` |
+| Claims paid | `(claim × head of damage × treaty × transaction)` | 6,580 rows / 1,645 claims; 3,290 single-transaction slices, 1,645 two-transaction |
+| Claims OS | `(claim × as-at × treaty)` | 6,272 rows / 1,685 claims; 1–4 snapshots per claim, mean 1.9 |
 
-`CLAIMNUMBER` quality: zero nulls in either file, 836 claims present in both, and **no claim spans
-more than one reserving class**. Safe as a key.
+`CLAIMNUMBER` quality: zero nulls in either file, 836 claims present in both, and **no claim
+spans more than one reserving class**. Safe as a key.
 
-**Concentration: the top 10 claims are 29.9% of total paid.** Exclusion will move factors materially;
-this is a high-impact, high-scrutiny feature.
+### 1.3 Ranking must be slice-scoped — and the OS rule is not optional
+
+**Paid.** A naive `groupby(CLAIMNUMBER).sum()` adds GROSS to RI and nets Payment against
+Salvage. Scoped to `GROSS` / `Payment`, the top 10 claims are **22.3%** of gross paid, the
+largest single claim **7.9%**. (An earlier draft quoted 29.9%; that figure came from summing
+across every treaty and head of damage and is not a meaningful ranking.)
+
+**OS.** Summing across as-at snapshots multiply-counts one reserve. Measured:
+
+| rank | naive sum across snapshots | latest as-at (correct) |
+|---|---|---|
+| 1 | `SIL/D/C003/…1213/…` 38,994,200 | `SIL/F/C004/…0209/…` 6,000,000 |
+| 2 | `SIL/F/C004/…0209/…` 6,000,000 | `SIL/D/C003/…1213/…` 3,999,200 |
+
+The naive sum **overstates the top claim by 6.5×** and **ranks a different claim first**. A
+naive implementation would not merely be imprecise — it would list the wrong claims.
+
+### 1.4 Excluding large claims can INCREASE the reserve
+
+The finding that matters most, and the one that inverts this plan's default.
+
+Large claims pay early and large. Removing them shrinks the early diagonal more than the
+tail, so the attritional book looks *slower* developing:
+
+| development | all claims | ex top-10 | change |
+|---:|---:|---:|---:|
+| 0 | 3.4746 | 3.3189 | −4.5% |
+| 2 | 1.4075 | 1.2008 | −14.7% |
+| 4 | 1.2613 | 1.4975 | **+18.7%** |
+| 5 | 1.1972 | 1.3806 | **+15.3%** |
+
+So 2016-Q4's ultimate rises from 46,338,499 to **63,444,124 (+36.9%)** under a mode that
+keeps large claims in the base while taking factors from a triangle without them. A user who
+clicks "remove the top 10 claims" will not expect the reserve to go **up**.
+
+### 1.5 The three modes, measured
+
+GROSS / Payment, top-10 excluded, against a base ultimate of 487,468,241:
+
+| mode | total ultimate | vs base |
+|---|---:|---:|
+| 1 `exclude_from_ldf_only` — factors ex-large, base keeps large | 552,106,291 | **+13.3%** |
+| 2 `exclude_and_add_back` — attritional developed, large added at face | 469,104,811 | **−3.8%** |
+| 3 `exclude_entirely` | 447,515,034 | −8.2% |
+
+**Mode 1 is internally inconsistent**: it applies factors derived from the attritional
+population to a base containing the large claims, implicitly assuming those claims will
+develop like attritional ones — which contradicts the reason they were excluded. It
+double-counts large-claim development, which is why it is the *largest* mover and in the
+direction nobody intends.
+
+An earlier draft of this plan made mode 1 the default on the grounds that it was "least
+intrusive". Measurement says it is the **most** intrusive. See §2.3.
+
+### 1.6 The strikethrough surface does not exist yet
+
+This plan previously assumed `TriangleGrid` would arrive with WP1 (requirement 7). It has
+not been built — triangles render inline inside `ReserveCdfEditor` from a `grid` payload.
+Since requirement 6 is being delivered before requirement 7, **this work package extracts
+`TriangleGrid`**, and WP1 extends it later for factor exclusion. The roadmap dependency is
+reversed accordingly.
 
 ## 2. Design
 
@@ -81,34 +136,81 @@ artefact of that extract; aggregation is by explicit key and the tests assert be
 Both are scoped per `(RESERVINGCLASS)` by default, optionally book-wide. Per-class is the default
 because factor selection is per class.
 
-### 2.3 Treatment modes
+### 2.3 Treatment modes — default corrected to `exclude_and_add_back`
 
-| Mode | Effect | Default |
+| mode | effect | default |
 |---|---|---|
-| `exclude_from_ldf_only` | Excluded claims removed from the **age-to-age factor** calculation only; they remain in the cumulative triangle, the Reserve Summary and the reserve base | **yes** |
-| `exclude_and_add_back` | Attritional triangle developed without them; their actual paid + OS re-added at Reserve Summary level as a `Large Loss` line, plus an optional user-entered large-loss IBNR loading | |
-| `exclude_entirely` | Removed from every calculation | no — warned |
+| `exclude_and_add_back` | Attritional triangle developed with attritional factors; the excluded claims' actual paid + OS added back as a separate `Large Loss` line, plus an optional user-entered large-loss IBNR loading | **yes** |
+| `exclude_from_ldf_only` | Factors from the attritional triangle applied to a base that still contains the large claims | no — **warned** |
+| `exclude_entirely` | Removed from base and factors alike | no — warned |
 
-`exclude_from_ldf_only` is the default because it changes the *factors* without changing the booked
-reserve, which is the least-intrusive and most common actuarial treatment. `exclude_entirely`
-understates the ultimate and the UI says so at the point of selection, not in a footnote.
+`exclude_and_add_back` is the default because it is the only mode whose **factors and base
+describe the same population**. Measured at −3.8% against base (§1.5), it behaves the way a
+user expects: taking large losses out of the development pattern and putting their actual
+cost back.
 
-The three modes differ only in **where the filter is applied**, which keeps the implementation small:
+`exclude_from_ldf_only` remains available — some actuaries genuinely want to strip a
+distorting claim from *factor selection* alone — but it is not the default and the UI states
+its measured effect (**+13.3%** on this book) before it can be chosen. The earlier draft had
+this backwards.
 
+`exclude_entirely` understates the ultimate by dropping real cost; it stays available and
+loudly warned.
+
+**Every mode shows per-cohort effects, not just a total.** §1.4 measured a single accident
+quarter rising 36.9% under mode 1 while the book moved 13.3%. A total alone would hide that,
+and the direction — up, on an exclusion — is the surprise that most needs surfacing.
+
+### 2.4 `TriangleGrid` is extracted here, not inherited
+
+Per §1.6, this work package extracts the triangle renderer out of `ReserveCdfEditor` into a
+reusable `TriangleGrid` with per-cell strikethrough. Requirement 7 then extends the same
+component for *factor* exclusion rather than building its own.
+
+Two exclusion sources with different consequences must not look identical:
+
+| source | treatment |
+|---|---|
+| cell affected by an excluded **claim** (this WP) | strikethrough, muted, left accent bar |
+| **factor** excluded by the user (WP1) | strikethrough, muted, dotted underline |
+| both | accent bar + dotted underline |
+
+Hovering names the reason and, for claims, the claim numbers contributing to that cell.
+
+### 2.5 Prerequisite — the Reserve Summary's appended formulas use hardcoded column letters
+
+`exclude_and_add_back` (the default, §2.3) needs a `Large Loss` line on the Reserve Summary.
+That is not currently safe.
+
+The sheet is written with six base columns — `A` Accident_Period, `B` EP, `C` Paid Claims,
+`D` OS Claims, `E` Reported Claims, `F` Reported LR — and `run_update_reserve_summary` then
+appends thirteen more. Its start column is computed:
+
+```python
+new_headers_start_col = len(existing_headers) + 1
 ```
-exclude_from_ldf_only  -> filter applied when building the a2a input only
-exclude_and_add_back   -> filter applied to the triangle; excluded totals surfaced as a separate line
-exclude_entirely       -> filter applied at import, before any aggregation
+
+but every formula it writes hardcodes letters:
+
+```python
+data['ELR Ultimate']    = f'=IFERROR(G{r} * B{r},0)'
+data['Ultimate Claims'] = f'=IF(O{r}="Paid CL", J{r}, IF(O{r}="Reported CL", K{r}, ...'
+data['CDF']             = f'=IFERROR(P{r}/C{r},0)'
 ```
 
-### 2.4 Strikethrough is one component, two meanings
+Add a seventh base column and the append start shifts to `H`, while the formulas still point
+at `G` — which is now `Large Loss`. **Every appended formula in every reserve workbook would
+be silently wrong**, and no existing test compares formula strings.
 
-WP1 builds `TriangleGrid` with per-cell strikethrough for **factor** exclusion. WP5 extends the same
-component with **claim** exclusion, rendered as strikethrough on the affected triangle cells with a
-tooltip naming the contributing claims. One component, one visual language, two exclusion sources —
-and the UI distinguishes them by colour treatment so an actuary can see *why* a cell is struck.
+**So this work package first makes the letters positional**, derived from the header row by
+name. That is bit-identical today (six headers still yield `G`…`S`) and is asserted as such
+by comparing the generated formula strings against the current output before any base column
+is added. Only then is `Large Loss` introduced.
 
-### 2.5 Audit
+This is a prerequisite, not a nice-to-have: without it the default treatment mode corrupts
+the workbook it is meant to improve.
+
+### 2.6 Audit
 
 An exclusion is a material judgement. Persisted to `input_meta["large_claims"]` and snapshotted:
 
@@ -167,29 +269,30 @@ is the number that tells an actuary whether exclusion is warranted; the individu
 ## 6. Tests
 
 **`module1_engine/tests/test_large_claims.py`** (new)
-* ranking excludes RI and Salvage rows under the default slice
-* a claim with 1, 2 and n transactions in a slice aggregates correctly — the grain assumption is
-  explicitly not relied upon
-* OS ranking uses the latest as-at; a claim whose reserve falls between snapshots is ranked on the
-  latest, not the maximum
-* ranking uses the engine `Amount` column, matching Motor/recovery substitution
-* `top_n` per class vs book-wide produce different sets on a crafted fixture
+* ranking excludes RI and Salvage rows under the default slice; the top-10 share is 22.3%
+* **OS ranks on the latest as-at**: the naive sum overstates the top claim 6.5× and returns
+  a different claim first — both asserted, because a naive implementation lists the wrong claims
+* a claim with 1, 2 and n transactions in a slice aggregates correctly — the grain assumption
+  is explicitly not relied upon
+* ranking uses the engine's derived `Amount`, so it matches the triangles it adjusts
+* `top_n` per class vs book-wide differ on a crafted fixture
 * `threshold` and `top_n` agree when the threshold is set to the Nth value
-* `exclude_from_ldf_only` changes a2a factors but leaves the cumulative triangle and Reserve Summary
-  `Paid Claims` unchanged
-* `exclude_entirely` changes both
-* `exclude_and_add_back` — attritional ultimate plus the large-loss line reconciles to the
-  unexcluded reserve base within tolerance
-* excluding every claim in a class → empty triangle handled, warned, not a crash
+* **the §1.5 mode table**, asserted mode by mode: `+13.3% / −3.8% / −8.2%`
+* **§1.4 regression**: under `exclude_from_ldf_only`, 2016-Q4 rises 36.9% — the
+  counter-intuitive direction is pinned so nobody "fixes" it into silence
+* `exclude_and_add_back` reconciles: attritional ultimate + large-loss actuals equals the
+  reported total
+* excluding every claim in a class → empty triangle handled, warned, no crash
 * an excluded claim number absent from the data → warning, not error
 
 **`processing/tests/test_large_claims_api.py`** (new)
-* report endpoint works from a source job and from staged uploads
-* datasets without claim numbers produce an explicit "not available" response, not an empty list
-* audit block persisted with actor and manual/rule provenance
+* the report works from a source job and from staged uploads
+* datasets without claim numbers return an explicit "not available", not an empty list
+* the audit block records claim numbers, mode, threshold, actor and timestamp, and
+  distinguishes rule-selected from manually added claims
 
 **`datasets/tests/test_dataset_api.py`**
-* claim-number round-trip through import, template and engine adapter
+* `claim_number` and `reported_date` round-trip through import, template and engine adapter
 
 ## 7. Edge cases
 
@@ -208,5 +311,134 @@ is the number that tells an actuary whether exclusion is warranted; the individu
 
 ## 8. Estimate
 
-Backend 5d (plumbing 1.5d, ranking 1.5d, three modes 2d), frontend 4d, tests 3d, goldens 1d.
-**~13 days.**
+| | |
+|---|---|
+| plumb `CLAIMNUMBER` + `REPORTEDDATE` (engine, models, columns, templates, schemas) | 2d |
+| ranking service (slice-scoped paid, latest-as-at OS, top-N + threshold) | 1.5d |
+| the three treatment modes + per-cohort impact | 2d |
+| extract `TriangleGrid` with claim strikethrough (§2.4) | 2.5d |
+| large-claims panel + mode selector with measured effects | 2.5d |
+| tests | 2.5d |
+| goldens per mode | 1d |
+| **Total** | **~14 days** |
+
+One day above the pre-verification estimate: extracting `TriangleGrid` moved into this work
+package (§1.6) and the per-cohort impact view became mandatory rather than optional (§1.4).
+
+## 9. What changed after verification
+
+* **The default treatment mode was wrong.** `exclude_from_ldf_only` was chosen as "least
+  intrusive"; it measures **+13.3%**, the largest move of the three and in the direction
+  opposite to intent, because it applies attritional factors to a base containing the large
+  claims. `exclude_and_add_back` (−3.8%) is now the default.
+* **Excluding claims can raise the reserve** — 2016-Q4 by 36.9%. Per-cohort impact is now a
+  required part of the UI, not a nicety.
+* **The top-10 share is 22.3%, not 29.9%** — the earlier figure summed across treaty and head
+  of damage, which is exactly the ranking error §2.1 exists to prevent.
+* **`TriangleGrid` is built here**, not inherited from WP1, since requirement 6 ships first.
+
+## 10. Implementation status — built
+
+Implemented and tested. What follows records where **building it changed the plan**, because
+in every case the plan was wrong in a way only measurement exposed.
+
+### 10.1 The default mode did nothing (defect found during implementation)
+
+`ExclusionPlan.adds_back` was a correct, unit-tested property that **no caller consumed**.
+`grep adds_back module1_engine/engine.py` returned nothing. The default mode therefore
+filtered the triangles and the base and never added the cost back — it behaved exactly like
+`exclude_entirely`, understating every ultimate by the large claims' full incurred. All 16
+`ExclusionPlan` unit tests passed throughout, because none of them reached a workbook.
+
+This is the second time in this project that a plumbing gap survived a green unit suite (the
+first was the Module 2 pattern override). The countermeasure applied here:
+`processing/tests/test_large_claims_api.py::ExclusionReachesTheWorkbookTests` runs the real
+engine over the reference fixtures and **reads the produced workbook's header row**.
+
+### 10.2 The routing table changed
+
+The plan said add-back filters the base and then adds back. It does not, and must not:
+
+| mode | triangles filtered | base filtered | add-back columns |
+|---|---|---|---|
+| `exclude_and_add_back` | yes | **no** | yes |
+| `exclude_from_ldf_only` | yes | no | no |
+| `exclude_entirely` | yes | yes | no |
+
+The Reserve Summary's Paid / OS / Reported columns must keep tying to the ledger, and the BF
+ultimates read their known component straight from them — filtering the base would have
+silently changed BF as well as CL. The split is carried instead in two new base columns,
+`Large Paid` and `Large OS`, written **only** in add-back mode, and consumed by the chain
+ladder:
+
+```
+Paid CL Ultimate     = (Paid Claims     - Large Paid)     x Paid CDF     + Large Incurred
+Reported CL Ultimate = (Reported Claims - Large Incurred) x Reported CDF + Large Incurred
+Large Incurred       = Large Paid + Large OS
+```
+
+Absent those columns both reduce to `base x CDF` — the historic expression — which is what
+keeps all eight pre-existing goldens bit-identical.
+
+### 10.3 Large claims re-enter at known incurred, not paid-to-date
+
+The plan's −3.8% added back **paid-to-date only**, which silently assigns an open large
+claim a zero case reserve. The implementation adds back paid **plus case** (PKR 5,069,200 on
+the reference book), so a large claim carries no IBNR of its own — its case reserve is taken
+as its ultimate, the standard treatment. Re-measured: **−2.7%**.
+
+### 10.4 Measured impact is not observable in a full-summary run
+
+An end-to-end run of `run_generate_summary` + `run_update_reserve_summary` reported
+`exclude_from_ldf_only` at **+0.00%**. That is an artifact, not a result: the engine writes
+Selected CDF as the placeholder formula `=1`, nothing evaluates it, and the reader's
+blank→2.0 fallback makes every CDF the constant 2.0. The workbook's ultimates are
+placeholders until an actuary selects factors in Excel.
+
+Consequence for the golden: `m1_large_claims_ref` is frozen at the **measure** level
+(per-cohort paid-to-date, both CDF vectors, and all four ultimates) rather than by running a
+full summary, because a full-summary golden literally cannot tell the three modes apart.
+
+### 10.5 Two hardcoded column letters, one already latent
+
+`test_reserve_summary_formulas.py` had made the appended formulas positional. Add-back's two
+extra base columns found a second instance the earlier fix missed: the **Selected Method
+data-validation dropdown** was attached to a literal `O2:O{max_row}`. With eight base columns
+Selected Method is at Q, so the dropdown would have landed on Paid CDF. Now derived from the
+same header map. The formatting loop's `for col in ws.columns` was also renamed `sheet_col`
+so it cannot shadow that map.
+
+### 10.6 A selection that matches nothing is now reported
+
+An exclusion whose claim numbers match no row produces output **identical to no exclusion** —
+the one failure mode of this feature that is invisible in the result, and the likely one
+(re-uploaded files, a selection made against a previous run). `ExclusionPlan.match_report`
+measures it, `run_generate_summary` fills the caller's `run_report`, the summary task
+persists it to `input_meta["large_claims"]["match"]`, and the wizard renders it — destructive
+styling when nothing matched, warning when only some did.
+
+### 10.7 Files
+
+| | |
+|---|---|
+| `module1_engine/large_claims.py` | ranking, `ExclusionPlan`, `period_totals`, `match_report` |
+| `module1_engine/engine.py` | `Large Paid`/`Large OS` columns, add-back ultimates, positional dropdown, `run_report` |
+| `datasets/models.py` + migration `0006` | `claim_number` / `reported_date` on both claims row models |
+| `datasets/services/columns.py`, `templates.py` | the Excel-free path can now exclude claims |
+| `processing/views.py`, `processing/tasks.py` | endpoint, exclusion persistence, match report |
+| `benchmarks/fixtures/m1_large_claims_ref` | the mode golden (§10.4) |
+| `src/components/LargeClaimsPanel.tsx`, `TriangleGrid.tsx` | ranked table + mode selector, strikethrough |
+| `src/pages/SummaryGeneratorPage.tsx`, `src/state/wizards/summary.ts` | wizard step + persisted selection |
+
+### 10.8 Verification
+
+* `pytest module1_engine/tests` — **106 passed**, all **9** goldens green.
+* `manage.py test processing.tests.test_large_claims_api` — **15 passed**.
+* `manage.py test datasets` — **52 passed**.
+* `manage.py test processing` — **200/202**; the two failures are
+  `test_dataset_e2e`, which need a live Redis broker for `.delay()` and fail identically on
+  this machine regardless of these changes.
+* `vitest` — **149 passed** (20 files). `tsc` at its unchanged 45-error baseline.
+
+**Not verified:** nothing here has been exercised against the running stack (Postgres +
+Redis + Celery + Vite). The same caveat stands for items 1–5.

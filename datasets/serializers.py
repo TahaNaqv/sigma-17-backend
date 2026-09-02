@@ -18,6 +18,7 @@ from .models import (
     PremiumRow,
     PreviousPeriodLicRow,
     PreviousPeriodUprRow,
+    PaymentPatternRow,
 )
 
 
@@ -251,6 +252,19 @@ class MovementOverrideRowSerializer(_RowBaseSerializer):
         )
 
 
+class PaymentPatternRowSerializer(_RowBaseSerializer):
+    """One (class, development period) weight. Long form — the wide Excel shape is
+    unpivoted at import (see datasets/services/wide_pattern.py)."""
+
+    class Meta(_RowBaseSerializer.Meta):
+        model = PaymentPatternRow
+        fields = _RowBaseSerializer.Meta.fields + (
+            "reserving_class",
+            "dev_period",
+            "weight",
+        )
+
+
 ROW_SERIALIZER_FOR_KIND = {
     Dataset.Kind.PREMIUM: PremiumRowSerializer,
     Dataset.Kind.CLAIMS_PAID: ClaimsPaidRowSerializer,
@@ -259,6 +273,7 @@ ROW_SERIALIZER_FOR_KIND = {
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PreviousPeriodLicRowSerializer,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PreviousPeriodUprRowSerializer,
     Dataset.Kind.MOVEMENT_OVERRIDE: MovementOverrideRowSerializer,
+    Dataset.Kind.PAYMENT_PATTERN: PaymentPatternRowSerializer,
 }
 
 

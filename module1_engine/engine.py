@@ -5,6 +5,7 @@ Callers pass directory paths where .xlsx files have been staged.
 
 import pandas as pd
 import glob
+import logging
 import os
 import re
 from openpyxl import load_workbook
@@ -17,7 +18,14 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 
 from core.excel import READ_ENGINE
+from core.normalize import canonical_key
+from core.grain import DEFAULT_GRAIN
 from core.profiling import stage_timer
+from module1_engine.averages import age_to_age_matrix, benchmark_rows
+from module1_engine.large_claims import ExclusionPlan
+from module1_engine.upr_methods import UprPolicy, unearned_fraction
+
+logger = logging.getLogger(__name__)
 
 
 def select_experience_period(start_period_str, end_period_str):
@@ -42,7 +50,11 @@ def import_data(folder_path, amount_column_name, is_os=False):
         if file.startswith('~$'):  # Skip temporary files
             continue
         if is_os:
-            needed_columns = ['AMOUNTOUTSTANDING','ISSUEDATE','LOSSDATE','As at','RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE']
+            # CLAIMNUMBER / REPORTEDDATE are present in the source files and were
+            # previously discarded, which is why claim identity did not exist anywhere in
+            # the system. Reading them is additive: `usecols` intersects with what the file
+            # actually has, and no aggregate consumes them, so output is unchanged.
+            needed_columns = ['AMOUNTOUTSTANDING','ISSUEDATE','LOSSDATE','As at','RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE','CLAIMNUMBER','REPORTEDDATE']
             try:
                 existing_columns = pd.read_excel(file, nrows=0, engine=READ_ENGINE).columns
             except Exception as e:
@@ -62,7 +74,7 @@ def import_data(folder_path, amount_column_name, is_os=False):
                 df.rename(columns={'AMOUNTOUTSTANDING': 'Amount'}, inplace=True)
             df['Type'] = 'OS'
         else:
-            needed_columns = ['AMOUNTPAID','AMOUNTRECOVERED','ISSUEDATE','LOSSDATE','PAYMENTDATE','RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE']
+            needed_columns = ['AMOUNTPAID','AMOUNTRECOVERED','ISSUEDATE','LOSSDATE','PAYMENTDATE','RESERVINGCLASS','POLICYCLASS','RI_TREATY_TYPE','HEADOFDAMAGE','CLAIMNUMBER','REPORTEDDATE']
             try:
                 existing_columns = pd.read_excel(file, nrows=0, engine=READ_ENGINE).columns
             except Exception as e:
@@ -102,6 +114,8 @@ def preprocess_data(premium_data_folder):
     return pd.concat(dfs, ignore_index=True) if dfs else None
 
 def preprocess_dates(df):
+    # Genuinely a calendar quarter of underwriting, not an accident-period axis — it is
+    # not part of the booking-grain contract, so it stays literal.
     df['Underwriting Quarter'] = df['POLICYSTARTDATE'].dt.to_period('Q')
     df['Underwriting Year'] = df['POLICYSTARTDATE'].dt.year
     df['UWY'] = df['Underwriting Year'].apply(lambda x: max(2018, x))
@@ -115,11 +129,11 @@ def preprocess_dates(df):
     return df
 
 def calculate_quarterly_premium(df, start_period, end_period):
-    quarters = pd.date_range(start_period, end_period, freq='QE')
+    quarters = DEFAULT_GRAIN.date_range(start_period, end_period)
     result = []
 
     for current_quarter in quarters:
-        quarter_start = current_quarter.to_period('Q').start_time
+        quarter_start = current_quarter.to_period(DEFAULT_GRAIN.period_alias).start_time
         quarter_end = quarter_start + pd.offsets.QuarterEnd(1)
         reserving_class_earned_premium = {}
 
@@ -136,14 +150,19 @@ def calculate_quarterly_premium(df, start_period, end_period):
             total_earned_premium = temp_df['Quarterly Premium'].sum()
             reserving_class_earned_premium[reserving_class] = total_earned_premium
 
-        result.append({'Accident_Period': current_quarter.to_period('Q').strftime('%Y-Q%q'), **reserving_class_earned_premium})
+        result.append({
+            'Accident_Period': DEFAULT_GRAIN.label_for(current_quarter),
+            **reserving_class_earned_premium,
+        })
 
     return pd.DataFrame(result)
 
 def get_quarter_end_dates(bop, eop):
-    return pd.date_range(start=bop, end=eop, freq='QE')
+    """Booking-period end dates. DEFAULT_GRAIN is quarterly, so this is unchanged; the
+    grain simply owns the frequency now."""
+    return DEFAULT_GRAIN.date_range(bop, eop)
 
-def calculate_upr(df, bop, eop):
+def calculate_upr(df, bop, eop, upr_policy: UprPolicy | None = None):
     year_end = eop
     previous_quarter = eop - pd.DateOffset(months=3)
     
@@ -163,45 +182,27 @@ def calculate_upr(df, bop, eop):
     # Calculate duration in days
     df['Duration'] = (df['RiskEndDate'] - df['RiskStartDate']).dt.days + 1
     df['Duration'] = pd.to_numeric(df['Duration'], errors='coerce')
-    # Safe denominator to avoid division by zero (Duration can be 0 for same-day policies)
-    duration_safe = np.maximum(df['Duration'], 1)
 
-    # Define conditions and choices for UPR calculation
-    conditions = [
-        (df['POLICYCLASS'] != "Marine cargo") & (df['ISSUEDATE'] <= year_end) & (df['PRODUCTTYPE'].isin(["Contractors All Risks", "Erection All Risks"])),
-        (df['POLICYCLASS'] != "Marine cargo") & (df['ISSUEDATE'] <= year_end) & (~df['PRODUCTTYPE'].isin(["Contractors All Risks", "Erection All Risks"])),
-        (df['POLICYCLASS'] == "Marine cargo") & (df['ISSUEDATE'] <= year_end) & (df['ISSUEDATE'] > previous_quarter)
-    ]
-    choices = [
-        1 - (((np.minimum(np.maximum((year_end - df['RiskStartDate']).dt.days + 1, 0), df['Duration']) ** 2) / (duration_safe ** 2))),
-        (np.maximum(0, np.minimum(df['Duration'], (df['RiskEndDate'] - year_end).dt.days)) / duration_safe),
-        1
-    ]
-    df['UPR'] = np.select(conditions, choices, default=0) * df['PREMIUMAMOUNT']
+    # UPR earning basis. Previously three copy-pasted np.select blocks that had already
+    # drifted from each other in two ways (marine class spelling, and a 91-day vs
+    # calendar-quarter window) — see docs/UPR_METHOD_SELECTION_PLAN.md §1.1. Now one
+    # resolver, with eligibility applied separately from the earning method.
+    fraction = unearned_fraction(df, year_end, upr_policy)
+    df['UPR'] = fraction * df['PREMIUMAMOUNT']
     df['Commission Expense'] = df['COMMISSIONAMOUNT']
-    df['DAC'] = np.select(conditions, choices, default=0) * df['COMMISSIONAMOUNT']
+    df['DAC'] = fraction * df['COMMISSIONAMOUNT']
     
     quarter_dates = get_quarter_end_dates(bop, eop)
     
     for date in quarter_dates:
         date_str = date.strftime('%Y-%m-%d')
-        previous_quarter = date - pd.DateOffset(months=3)
-        
-        conditions = [
-            (df['POLICYCLASS'] != "Marine Cargo") & (df['ISSUEDATE'] <= date) & (df['PRODUCTTYPE'].isin(["Contractors All Risks", "Erection All Risks"])),
-            (df['POLICYCLASS'] != "Marine Cargo") & (df['ISSUEDATE'] <= date) & (~df['PRODUCTTYPE'].isin(["Contractors All Risks", "Erection All Risks"])),
-            (df['POLICYCLASS'] == "Marine Cargo") & (df['ISSUEDATE'] <= date) & (df['ISSUEDATE'] > previous_quarter)
-        ]
-        choices = [
-            1 - (((np.minimum(np.maximum((date - df['RiskStartDate']).dt.days + 1, 0), df['Duration']) ** 2) / (duration_safe ** 2))),
-            (np.maximum(0, np.minimum(df['Duration'], (df['RiskEndDate'] - date).dt.days)) / duration_safe),
-            1  # Full premium amount for marine cargo within the quarter
-        ]
-        df[f'UPR_{date_str}'] = np.select(conditions, choices, default=0) * df['PREMIUMAMOUNT']
+        df[f'UPR_{date_str}'] = (
+            unearned_fraction(df, date, upr_policy) * df['PREMIUMAMOUNT']
+        )
         
     return df
 
-def summarize_upr_by_reserving_class(df, bop=None, eop=None):
+def summarize_upr_by_reserving_class(df, bop=None, eop=None, upr_policy: UprPolicy | None = None):
     # Vectorised replacement for per-row .apply (plan §1.4). `s.where(mask)` keeps
     # the value where the treaty type matches and yields NaN otherwise — identical
     # to the original `value if ... else None` once summed/round-tripped. The
@@ -243,25 +244,27 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
     allocation_ep = pd.DataFrame()
     
     last_period_closing = bop - pd.Timedelta(days=1)
-    additional_dates = pd.date_range(bop, eop, freq='QE')
+    additional_dates = DEFAULT_GRAIN.date_range(bop, eop)
     all_dates = [last_period_closing] + list(additional_dates)
     prev_quarter_gross_upr = None
     prev_quarter_ri_upr = None
     
     # Ensure the UPR for last_period_closing is calculated
     quarter_dates = get_quarter_end_dates(last_period_closing, eop)
-    df = calculate_upr(df, last_period_closing, eop)
+    df = calculate_upr(df, last_period_closing, eop, upr_policy)
 
     # Vectorised loop bodies (plan §1.4): masks and the issue-date quarter string
     # are constant across the loop, so hoist them out instead of recomputing per
     # row via .apply. df was just reassigned by calculate_upr, so re-derive here.
     gross_mask = df['RI_TREATY_TYPE'] == 'GROSS'
     ri_mask = df['RI_TREATY_TYPE'] == 'RI'
-    issue_quarter = df['ISSUEDATE'].dt.to_period('Q').dt.strftime('%Y-Q%q')
+    issue_quarter = df['ISSUEDATE'].dt.to_period(
+        DEFAULT_GRAIN.period_alias
+    ).map(DEFAULT_GRAIN.label_for)
 
     for date in all_dates:
         date_str = date.strftime('%Y-%m-%d')
-        quarter_year_str = date.to_period('Q').strftime('%Y-Q%q')
+        quarter_year_str = DEFAULT_GRAIN.label_for(date)
 
         # Ensure the UPR columns exist before proceeding
         upr_col = f'UPR_{date_str}'
@@ -350,28 +353,19 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
 
     # Calculate UPR run off
     max_policy_end_date = eop + pd.DateOffset(months=18)
-    upr_runoff_dates = pd.date_range(eop, max_policy_end_date, freq='QE')
+    upr_runoff_dates = DEFAULT_GRAIN.date_range(eop, max_policy_end_date)
 
     upr_runoff = pd.DataFrame()
     prev_quarter_gross_upr = None
-    duration_safe = np.maximum(df['Duration'], 1)  # avoid division by zero in runoff loop
 
     # Ensure calculate_upr handles additional quarterly dates
     for date in upr_runoff_dates:
         date_str = date.strftime('%Y-%m-%d')
-        quarter_year_str = date.to_period('Q').strftime('%Y-Q%q')
+        quarter_year_str = DEFAULT_GRAIN.label_for(date)
 
-        conditions = [
-            (df['POLICYCLASS'] != "Marine cargo") & (df['ISSUEDATE'] <= date) & (df['PRODUCTTYPE'].isin(["Contractors All Risks", "Erection All Risks"])),
-            (df['POLICYCLASS'] != "Marine cargo") & (df['ISSUEDATE'] <= date) & (~df['PRODUCTTYPE'].isin(["Contractors All Risks", "Erection All Risks"])),
-            (df['POLICYCLASS'] == "Marine cargo") & (df['ISSUEDATE'] <= date) & (df['ISSUEDATE'] > date - pd.Timedelta(days=91))
-        ]
-        choices = [
-            1 - (((np.minimum(np.maximum((date - df['RiskStartDate']).dt.days + 1, 0), df['Duration']) ** 2) / (duration_safe ** 2))),
-            (np.maximum(0, np.minimum(df['Duration'], (df['RiskEndDate'] - date).dt.days)) / duration_safe),
-            1
-        ]
-        df[f'UPR_{date_str}'] = np.select(conditions, choices, default=0) * df['PREMIUMAMOUNT']
+        df[f'UPR_{date_str}'] = (
+            unearned_fraction(df, date, upr_policy) * df['PREMIUMAMOUNT']
+        )
 
         df[f'Gross_UPR_{date_str}'] = df[f'UPR_{date_str}'].where(gross_mask)
 
@@ -380,7 +374,7 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
         }).reset_index()
 
         runoff_summary = runoff_summary.rename(columns={
-            f'Gross_UPR_{date_str}': date.to_period('Q').strftime('%Y-Q%q')
+            f'Gross_UPR_{date_str}': DEFAULT_GRAIN.label_for(date)
         })
 
         if prev_quarter_gross_upr is not None:
@@ -388,10 +382,10 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
             if date > eop:
                 runoff_summary[f'GEP_{quarter_year_str}'] = (
                     prev_quarter_gross_upr  # BOP UPR
-                    - runoff_summary[date.to_period("Q").strftime('%Y-Q%q')]  # EOP UPR
+                    - runoff_summary[DEFAULT_GRAIN.label_for(date)]  # EOP UPR
                 )
 
-        prev_quarter_gross_upr = runoff_summary[date.to_period('Q').strftime('%Y-Q%q')]
+        prev_quarter_gross_upr = runoff_summary[DEFAULT_GRAIN.label_for(date)]
 
         upr_runoff = pd.merge(upr_runoff, runoff_summary, on=['RESERVINGCLASS', 'UWY'], how='outer') if not upr_runoff.empty else runoff_summary
 
@@ -407,12 +401,12 @@ def summarize_upr_by_reserving_class(df, bop=None, eop=None):
     return upr_summary, additional_summaries, allocation_ep, upr_runoff
 
 
-def calculate_policy_level_upr(df, bop, eop):
+def calculate_policy_level_upr(df, bop, eop, upr_policy: UprPolicy | None = None):
     # Filter out rows where RiskEndDate is less than eop
     df = df[df['RiskEndDate'] >= eop]
 
     # Ensure the UPR is calculated for the remaining rows
-    df = calculate_upr(df, bop, eop)
+    df = calculate_upr(df, bop, eop, upr_policy)
 
     # Group by policy number, reserving class, and RI_TREATY_TYPE
     policy_level_upr = df.groupby(['POLICYNUMBER', 'RESERVINGCLASS', 'RI_TREATY_TYPE']).agg({
@@ -441,6 +435,7 @@ def run_policy_level_upr(
     eop_str: str,
     premium_data_folder: str,
     output_dir: str,
+    upr_policy: UprPolicy | None = None,
 ) -> str:
     """Write policy-level UPR workbook to output_dir. Returns output file path."""
     if not premium_data_folder:
@@ -455,7 +450,10 @@ def run_policy_level_upr(
     if df is None:
         raise ValueError("No valid data found in the premium data folder.")
 
-    policy_level_upr_df = calculate_policy_level_upr(df, bop, eop)
+    # Threaded deliberately: this is a SEPARATE entry point into calculate_upr, so a
+    # policy applied to the summary but not here would leave the two disagreeing, and no
+    # existing golden compares them (plan §2.1).
+    policy_level_upr_df = calculate_policy_level_upr(df, bop, eop, upr_policy)
     eop_date_str = eop.strftime("%d-%m-%Y")
     output_file_path = os.path.join(output_dir, f"Policy Level UPR {eop_date_str}.xlsx")
     policy_level_upr_df.to_excel(output_file_path, index=False)
@@ -486,7 +484,9 @@ def calculate_claims_paid_summary(df, bop, eop):
 def calculate_claims_os_summary(df, end_period):
     df['As at Year'] = df['As at'].dt.year
     df['Loss Year'] = df['LOSSDATE'].dt.year
-    df['Accident_Period'] = df['LOSSDATE'].dt.to_period('Q').dt.strftime('%Y-Q%q')
+    df['Accident_Period'] = df['LOSSDATE'].dt.to_period(
+        DEFAULT_GRAIN.period_alias
+    ).map(DEFAULT_GRAIN.label_for)
     df['Underwriting Year'] = df['ISSUEDATE'].dt.year
     df['UWY'] = df['Underwriting Year'].apply(lambda x: max(2018, x))
     
@@ -542,27 +542,33 @@ def calculate_incremental_triangle(df, start_period, end_period, is_os=False):
     # bit-identical. Revisit only with an R1 tolerance sign-off. This is not a hot
     # path on the reference data (reserve_loop is dominated by openpyxl writes).
     # Generate a list of quarterly periods from start_period to end_period
-    accident_periods = pd.date_range(start_period, end_period, freq='QE').to_period('Q')
+    accident_periods = DEFAULT_GRAIN.date_range(start_period, end_period).to_period(
+        DEFAULT_GRAIN.period_alias
+    )
     max_development_period = len(accident_periods)
 
     # Create a DataFrame with zeroes, indexed by the accident periods and columns for each development period
-    triangle = pd.DataFrame(0, index=accident_periods.strftime('%Y-Q%q'), columns=range(max_development_period))
+    triangle = pd.DataFrame(
+        0,
+        index=[DEFAULT_GRAIN.label_for(p) for p in accident_periods],
+        columns=range(max_development_period),
+    )
 
     for index, row in df.iterrows():
         if is_os and pd.notna(row['As at']):
-            accident_quarter = row['LOSSDATE'].to_period('Q')
-            as_at_quarter = pd.to_datetime(row['As at']).to_period('Q')
+            accident_quarter = row['LOSSDATE'].to_period(DEFAULT_GRAIN.period_alias)
+            as_at_quarter = pd.to_datetime(row['As at']).to_period(DEFAULT_GRAIN.period_alias)
             development_quarter = (as_at_quarter - accident_quarter).n
 
             if accident_quarter in accident_periods and 0 <= development_quarter < max_development_period:
-                triangle.at[accident_quarter.strftime('%Y-Q%q'), development_quarter] += row['Amount']
+                triangle.at[DEFAULT_GRAIN.label_for(accident_quarter), development_quarter] += row['Amount']
         elif 'PAYMENTDATE' in df.columns and pd.notna(row['PAYMENTDATE']):
-            accident_quarter = row['LOSSDATE'].to_period('Q')
-            payment_quarter = row['PAYMENTDATE'].to_period('Q')
+            accident_quarter = row['LOSSDATE'].to_period(DEFAULT_GRAIN.period_alias)
+            payment_quarter = row['PAYMENTDATE'].to_period(DEFAULT_GRAIN.period_alias)
             development_quarter = (payment_quarter - accident_quarter).n
 
             if accident_quarter in accident_periods and 0 <= development_quarter < max_development_period:
-                triangle.at[accident_quarter.strftime('%Y-Q%q'), development_quarter] += row['Amount']
+                triangle.at[DEFAULT_GRAIN.label_for(accident_quarter), development_quarter] += row['Amount']
 
     # Reset the index to keep it clean for further operations
     triangle.reset_index(inplace=True)
@@ -578,18 +584,176 @@ def calculate_cumulative_triangle(incremental_triangle):
     return cumulative_triangle
 
 def calculate_age_to_age_factors(cumulative_triangle):
+    """Age-to-age factors, with UNDEFINED cells left blank rather than zero-filled.
+
+    Defect F3: this used to `.fillna(0)` the undeveloped lower-right region and the
+    zero-denominator cells alike, and `Simple Avg` then took a column mean over those zeros —
+    which is how a single real factor of 1.0 over eight accident periods was reported as
+    0.125, and how `Simple Avg CDF` collapsed to zero through the product. Nothing reads
+    these rows back (see docs/LDF_AVERAGE_SELECTION_PLAN.md §1.4), so the correction moves no
+    computed figure; it fixes the benchmark a human selects factors against.
+
+    A genuinely zero numerator over a positive denominator stays 0.0 — that is real data, not
+    a gap: cumulative paid can fall, because the Motor recovery substitution puts
+    AMOUNTRECOVERED into `Amount` for recovery heads.
+
+    Development column `j` holds the `j -> j+1` factor; the final column is always blank.
+    `iloc[:, 0]` is the Accident Period label column, restated here so the frame carries its
+    own row labels.
+    """
     age_to_age_factors = pd.DataFrame(index=cumulative_triangle.index, columns=cumulative_triangle.columns)
-    for i in range(1, len(cumulative_triangle.columns) - 1):
-        current_column = cumulative_triangle.iloc[:, i]
-        next_column = cumulative_triangle.iloc[:, i + 1]
-        # Safe division: avoid evaluating division when current_column is 0
-        age_to_age_factors.iloc[:, i] = (next_column / current_column.replace(0, np.nan)).fillna(0)
-        age_to_age_factors.iloc[:, 0] = cumulative_triangle.iloc[:, 0]
+    numeric = cumulative_triangle.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').to_numpy(dtype=float)
+    factors = age_to_age_matrix(numeric)
+    for offset in range(factors.shape[1]):
+        column = factors[:, offset]
+        age_to_age_factors.iloc[:, offset + 1] = np.where(np.isfinite(column), column, np.nan)
+    age_to_age_factors.iloc[:, 0] = cumulative_triangle.iloc[:, 0]
     return age_to_age_factors
+
+BLOCK_LABELS = {
+    "cumulative": "Cumulative Triangle",
+    "age_to_age": "Age-to-Age Factors",
+}
+
+#: The block each triangle sheet OPENS with. It occupies row 1, so it has no blank row above
+#: to carry a label — and giving it one would push the header to row 2, where `pd.read_excel`
+#: would take the label as the column names and every golden frame for every triangle sheet
+#: would degrade. The leading block is therefore identified by sheet name instead. It is
+#: stable: the Paid sheet has always led with incremental, the Reported sheet with cumulative
+#: (Reported has no incremental block at all).
+LEADING_BLOCK = {
+    "Paid Claims Triangle": "Incremental Triangle",
+    "Reported Triangle": "Cumulative Triangle",
+}
+
+
+def label_block(ws, header_row_1based: int, key: str) -> None:
+    """Name a triangle block in column 1 of the blank row above its header.
+
+    The web reader locates blocks by these labels instead of reproducing the engine's row
+    arithmetic, which is brittle and has already drifted once. Side benefit: the downloaded
+    workbook becomes self-describing. Blocks at row 1 are named by `LEADING_BLOCK` instead.
+    """
+    if header_row_1based > 1:
+        ws.cell(row=header_row_1based - 1, column=1, value=BLOCK_LABELS[key])
+
+
+def write_triangle_benchmarks(ws, cumulative_df, start_row_1based: int) -> int:
+    """Write the benchmark block below the age-to-age factors; return the Selected LDF row.
+
+    Layout (all rows located by their column-1 label, never by offset):
+
+        Accident Period | 0 | 1 | ...      <- header, repeating the development columns
+        Simple Avg LDF / CDF
+        Weighted Avg LDF / CDF
+        Ex-Hi-Lo Avg LDF / CDF
+        Last 4 Avg LDF / CDF
+        Last 8 Avg LDF / CDF
+        Median LDF / CDF
+        Factor Count
+        <blank>
+        Selected LDF                        <- written by the caller
+        Selected CDF
+
+    `Simple Avg` and `Weighted Avg` keep their historic labels and their historic position at
+    the top of the block. Both are corrected here: Simple Avg no longer averages over
+    zero-filled undefined cells (F3), and Weighted Avg is written at the development column it
+    actually describes rather than one to the right (F5).
+    """
+    dev_columns = list(cumulative_df.columns[1:])
+    cumulative = cumulative_df.iloc[:, 1:].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+
+    row = start_row_1based
+    ws.cell(row=row, column=1, value="Accident Period")
+    for offset, name in enumerate(dev_columns):
+        ws.cell(row=row, column=offset + 2, value=name)
+    row += 1
+
+    for label, values in benchmark_rows(cumulative):
+        ws.cell(row=row, column=1, value=label)
+        for offset, value in enumerate(values):
+            if offset >= len(dev_columns):
+                break
+            ws.cell(row=row, column=offset + 2, value=value)
+        row += 1
+
+    return row + 1  # one blank row, then Selected LDF
+
+
+def write_selected_rows(ws, cumulative_df, selected_ldf_row: int) -> None:
+    """Seed the Selected LDF / Selected CDF rows.
+
+    Selected LDF is seeded with the placeholder `=1` and Selected CDF with a live
+    `=PRODUCT(...)`. Neither is ever evaluated by this engine — it writes the file and reads
+    it back with `data_only=True`, which returns None for a formula no spreadsheet has
+    opened — so an un-edited workbook develops at `selected_cdf_row_to_series`' blank default
+    of 2.0 (defect F6). Real factors arrive only through the Update Reserve `ldf_overrides`
+    path, which writes literals.
+    """
+    n_columns = len(cumulative_df.columns)
+    ws.cell(row=selected_ldf_row, column=1, value="Selected LDF")
+    for col_idx in range(2, n_columns + 1):
+        ws.cell(row=selected_ldf_row, column=col_idx, value="=1")
+
+    selected_cdf_row = selected_ldf_row + 1
+    ws.cell(row=selected_cdf_row, column=1, value="Selected CDF")
+    last_col_ref = f"${get_column_letter(n_columns)}${selected_ldf_row}"
+    for col_idx in range(2, n_columns + 1):
+        col_letter = get_column_letter(col_idx)
+        ws.cell(
+            row=selected_cdf_row,
+            column=col_idx,
+            value=f"=PRODUCT({col_letter}{selected_ldf_row}:{last_col_ref})",
+        )
+
 
 # The five Selected-Method options (must match the Excel data-validation list
 # and the Ultimate Claims IF() formula branches below).
 RESERVE_METHODS = ("Paid CL", "Reported CL", "ELR", "Paid BF", "Reported BF")
+
+
+def apply_class_aliases(frame, aliases: dict[str, str] | None):
+    """Rewrite RESERVINGCLASS through an org's alias map, in place of the caller's frame.
+
+    The engine joins premium to claims by exact string equality, so a claims file spelling a
+    class `Health` where premium says `Health Insurance` has every one of those rows silently
+    discarded (WP0 / defect F1 — 3,044 rows worth 35,503,674 on the reference book).
+
+    Aliases are applied HERE, at the engine's read boundary, rather than by rewriting staged
+    frames as WP0's plan first proposed. That plan could not work for the file-upload path:
+    uploaded workbooks are staged as files and read straight from the folder, so there is no
+    intermediate frame to rewrite. Matching is on the canonical key, so an alias also absorbs
+    case and punctuation differences.
+
+    `None` leaves the frame untouched, which is what keeps every existing golden bit-identical.
+    """
+    if frame is None or not aliases or "RESERVINGCLASS" not in getattr(frame, "columns", []):
+        return frame
+    lookup = {canonical_key(alias): canonical for alias, canonical in aliases.items()}
+    if not lookup:
+        return frame
+    original = frame["RESERVINGCLASS"].astype(str)
+    mapped = original.map(lambda v: lookup.get(canonical_key(v), v))
+    if mapped.equals(original):
+        return frame
+    frame = frame.copy()
+    frame["RESERVINGCLASS"] = mapped
+    return frame
+
+
+def _as_float(value) -> float:
+    """Coerce a Reserve Summary cell to a number, treating blank/None/NaN as zero.
+
+    The large-claim columns are absent on most runs and blank on rows a slice never
+    touched; a silent 0.0 there is what keeps the ultimate formulas single-form.
+    """
+    if value is None:
+        return 0.0
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if np.isnan(f) else f
 
 
 def normalize_accident_period(value) -> str:
@@ -741,23 +905,58 @@ def run_update_reserve_summary(
                 new_headers_start_col = len(existing_headers) + 1
                 headers = existing_headers + new_headers
 
+                # Column letters are derived from the header row BY NAME, not hardcoded.
+                # The append start was already dynamic (`len(existing_headers) + 1`) while
+                # the formulas said G/B/H/... literally, so adding any base column would
+                # have shifted the appended block underneath its own formulas and silently
+                # corrupted every reserve workbook. With six base columns this resolves to
+                # exactly the historic letters, which the goldens assert.
+                col = {name: get_column_letter(i + 1) for i, name in enumerate(headers)}
+
                 reserving_class_data = []
 
                 for idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(existing_headers))):
+                    r = idx + 2
                     data = {existing_headers[col_idx]: cell.value for col_idx, cell in enumerate(row)}
                     data['Implied LR'] = None
                     data['Paid CDF'] = cdf_for_row(selected_cdf_values_paid_data, idx)
                     data['Reported CDF'] = cdf_for_row(selected_cdf_values_reported_data, idx)
-                    data['Paid CL Ultimate'] = data['Paid Claims'] * data['Paid CDF']
-                    data['Reported CL Ultimate'] = data['Reported Claims'] * data['Reported CDF']
-                    data['ELR Ultimate'] = f'=IFERROR(G{idx + 2} * B{idx + 2},0)'
-                    data['Paid BF Ultimate'] = f'=IFERROR((1-1/H{idx + 2}) * B{idx + 2} * G{idx + 2} + D{idx + 2}, 0)'
-                    data['Reported BF Ultimate'] = f'=IFERROR((1-1/I{idx + 2}) * B{idx + 2} * G{idx + 2} + E{idx + 2}, 0)'
+                    # Large-claim add-back. `Large Paid`/`Large OS` are present only when
+                    # the run used `exclude_and_add_back`; absent, both are 0 and these
+                    # expressions reduce exactly to `base * CDF` — the historic values the
+                    # goldens pin. The chain ladder develops the ATTRITIONAL base with the
+                    # attritional factor, then the large claims re-enter at their known
+                    # incurred (paid + case), carrying no IBNR of their own.
+                    large_paid = _as_float(data.get('Large Paid'))
+                    large_os = _as_float(data.get('Large OS'))
+                    large_incurred = large_paid + large_os
+                    data['Paid CL Ultimate'] = (
+                        (data['Paid Claims'] - large_paid) * data['Paid CDF'] + large_incurred
+                    )
+                    data['Reported CL Ultimate'] = (
+                        (data['Reported Claims'] - large_incurred) * data['Reported CDF']
+                        + large_incurred
+                    )
+                    data['ELR Ultimate'] = f"=IFERROR({col['Implied LR']}{r} * {col['EP']}{r},0)"
+                    data['Paid BF Ultimate'] = (
+                        f"=IFERROR((1-1/{col['Paid CDF']}{r}) * {col['EP']}{r} * "
+                        f"{col['Implied LR']}{r} + {col['OS Claims']}{r}, 0)"
+                    )
+                    data['Reported BF Ultimate'] = (
+                        f"=IFERROR((1-1/{col['Reported CDF']}{r}) * {col['EP']}{r} * "
+                        f"{col['Implied LR']}{r} + {col['Reported Claims']}{r}, 0)"
+                    )
                     data['Selected Method'] = 'Paid CL'
-                    data['Ultimate Claims'] = f'=IF(O{idx + 2}="Paid CL", J{idx + 2}, IF(O{idx + 2}="Reported CL", K{idx + 2}, IF(O{idx + 2}="ELR", L{idx + 2}, IF(O{idx + 2}="Reported BF", N{idx + 2}, M{idx + 2}))))'
-                    data['IBNR'] = f'=IFERROR(P{idx + 2} - E{idx + 2},0)'
-                    data['ULR'] = f'=IFERROR(P{idx + 2}/B{idx + 2},0)'
-                    data['CDF'] = f'=IFERROR(P{idx + 2}/C{idx + 2},0)'
+                    data['Ultimate Claims'] = (
+                        f"=IF({col['Selected Method']}{r}=\"Paid CL\", {col['Paid CL Ultimate']}{r}, "
+                        f"IF({col['Selected Method']}{r}=\"Reported CL\", {col['Reported CL Ultimate']}{r}, "
+                        f"IF({col['Selected Method']}{r}=\"ELR\", {col['ELR Ultimate']}{r}, "
+                        f"IF({col['Selected Method']}{r}=\"Reported BF\", {col['Reported BF Ultimate']}{r}, "
+                        f"{col['Paid BF Ultimate']}{r}))))"
+                    )
+                    data['IBNR'] = f"=IFERROR({col['Ultimate Claims']}{r} - {col['Reported Claims']}{r},0)"
+                    data['ULR'] = f"=IFERROR({col['Ultimate Claims']}{r}/{col['EP']}{r},0)"
+                    data['CDF'] = f"=IFERROR({col['Ultimate Claims']}{r}/{col['Paid Claims']}{r},0)"
 
                     # Apply the user's per-row Implied LR / Selected Method choices.
                     # Writing G + O as literals keeps L–S live formulas, so the
@@ -792,13 +991,18 @@ def run_update_reserve_summary(
                 # Add data validation
                 max_row = ws.max_row
                 dv = DataValidation(type="list", formula1='"Paid CL,Reported CL,ELR,Paid BF,Reported BF"', allow_blank=False)
-                dv.add(f'O2:O{max_row}')
+                # Positional, for the same reason the formulas are: 'O' is only correct
+                # while there are exactly six base columns. Add-back writes eight, which
+                # moves Selected Method to Q — a hardcoded 'O' would have attached the
+                # method dropdown to Paid CDF.
+                dv.add(f"{col['Selected Method']}2:{col['Selected Method']}{max_row}")
                 ws.add_data_validation(dv)
 
-                # Format columns
-                for col in ws.columns:
-                    ws.column_dimensions[col[0].column_letter].width = 15.22
-                    for cell in col:
+                # Format columns  (named `sheet_col` so it cannot shadow the `col`
+                # header->letter map the formulas and data validation above depend on)
+                for sheet_col in ws.columns:
+                    ws.column_dimensions[sheet_col[0].column_letter].width = 15.22
+                    for cell in sheet_col:
                         cell.number_format = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-'
 
                 # Save workbook
@@ -907,7 +1111,18 @@ def run_generate_summary(
     claims_paid_folder: str,
     claims_os_folder: str,
     output_dir: str,
+    upr_policy: UprPolicy | None = None,
+    exclusion: ExclusionPlan | None = None,
+    run_report: dict | None = None,
+    class_aliases: dict[str, str] | None = None,
 ) -> None:
+    """``run_report``, when given, is filled with facts the caller should persist.
+
+    Currently one: how many of the requested exclusion claim numbers were actually found.
+    An exclusion matching nothing produces output identical to no exclusion at all — the
+    one failure mode of that feature a user cannot see in the output — so it is measured
+    here, where the claim data is in hand, rather than inferred later.
+    """
     header_font = Font(color="FFFFFF", bold=True)
     header_fill = PatternFill(start_color="008080", end_color="008080", fill_type="solid")
     header_style = {"font": header_font, "fill": header_fill}
@@ -919,26 +1134,29 @@ def run_generate_summary(
 
     with stage_timer("m1.premium_load"):
         df = preprocess_data(premium_data_folder)
+        df = apply_class_aliases(df, class_aliases)
     if df is None:
         raise ValueError("No valid data found in the premium data folder.")
 
     with stage_timer("m1.quarterly_premium"):
         summary_df = calculate_quarterly_premium(df, bop, eop)
     with stage_timer("m1.calculate_upr"):
-        df = calculate_upr(df, bop=bop, eop=eop)
+        df = calculate_upr(df, bop=bop, eop=eop, upr_policy=upr_policy)
     with stage_timer("m1.summarize_upr_by_reserving_class"):
         upr_summary_df, additional_summaries, allocation_ep, upr_runoff = summarize_upr_by_reserving_class(
-            df, bop=bop, eop=eop
+            df, bop=bop, eop=eop, upr_policy=upr_policy
         )
 
     with stage_timer("m1.claims_load_paid"):
         paid_data = import_data(claims_paid_folder, "AMOUNTPAID", is_os=False)
+        paid_data = apply_class_aliases(paid_data, class_aliases)
     if paid_data is None or "PAYMENTDATE" not in paid_data.columns:
         raise ValueError("No valid 'PAYMENTDATE' found in the data.")
     claims_paid_summary_df = calculate_claims_paid_summary(paid_data, bop, eop)
 
     with stage_timer("m1.claims_load_os"):
         os_data = import_data(claims_os_folder, "AMOUNTOUTSTANDING", is_os=True)
+        os_data = apply_class_aliases(os_data, class_aliases)
     if os_data is None or "As at" not in os_data.columns:
         raise ValueError("No valid 'As at' found in the data.")
     claims_os_summary_df, lic_os_summary = calculate_claims_os_summary(os_data, eop)
@@ -954,11 +1172,21 @@ def run_generate_summary(
     combined_data = pd.concat([paid_data, os_data], ignore_index=True)
     combined_data["LOSSDATE"] = pd.to_datetime(combined_data["LOSSDATE"])
     combined_data["Accident_Period"] = combined_data["LOSSDATE"].dt.to_period("Q").apply(
-        lambda x: x.strftime("%Y-Q%q")
+        lambda x: DEFAULT_GRAIN.label_for(x)
     )
     combined_data = combined_data[
         (combined_data["LOSSDATE"] >= start_period) & (combined_data["LOSSDATE"] <= end_period)
     ]
+
+    if exclusion is not None and exclusion.active and run_report is not None:
+        match = exclusion.match_report(combined_data)
+        match["mode"] = exclusion.mode
+        run_report["large_claims_match"] = match
+        if match["matched"] == 0:
+            logger.warning(
+                "large_claims.no_match",
+                extra={"requested": match["requested"]},
+            )
 
     if not output_dir:
         raise ValueError("No output directory selected.")
@@ -967,7 +1195,7 @@ def run_generate_summary(
 
     # UW Summary calculations
     df_premium_gross = df[df['RI_TREATY_TYPE'] == 'GROSS']
-    df_premium_gross = calculate_upr(df_premium_gross, bop=bop, eop=eop)
+    df_premium_gross = calculate_upr(df_premium_gross, bop=bop, eop=eop, upr_policy=upr_policy)
 
     paid_data_gross = paid_data[paid_data['RI_TREATY_TYPE'] == 'GROSS']
     paid_data_summary_gross = paid_data_gross.groupby(['RESERVINGCLASS', 'UWY'])[['AMOUNTPAID', 'AMOUNTRECOVERED']].sum().reset_index()
@@ -1084,6 +1312,12 @@ def run_generate_summary(
         for head_of_damage in combined_data['HEADOFDAMAGE'].unique():
             for ri_type in ['GROSS', 'RI']:
                 filtered_data = combined_data[(combined_data['RESERVINGCLASS'] == reserving_class) & (combined_data['RI_TREATY_TYPE'] == ri_type) & (combined_data['HEADOFDAMAGE'] == head_of_damage)]
+                # Large-claim exclusion, RESERVE SUMMARY BASE path. Filtered only when the
+                # mode says so: `exclude_from_ldf_only` deliberately leaves the base intact
+                # (and is not the default precisely because that combination double-counts
+                # large-claim development — see module1_engine.large_claims).
+                if exclusion is not None and exclusion.filters_base:
+                    filtered_data = exclusion.apply(filtered_data)
 
                 if "MOTOR" in reserving_class:
                     output_file_name = f"{reserving_class} {head_of_damage} {ri_type} {eop.strftime('%Y-%m')}.xlsx"
@@ -1116,10 +1350,14 @@ def run_generate_summary(
                 reserving_class_claims.columns = ['Paid Claims', 'OS Claims']
 
                 os_data_reserving_class = os_data[(os_data['RESERVINGCLASS'] == reserving_class) & (os_data['RI_TREATY_TYPE'] == ri_type) & (os_data['HEADOFDAMAGE'] == head_of_damage)]
+                if exclusion is not None and exclusion.filters_base:
+                    os_data_reserving_class = exclusion.apply(os_data_reserving_class)
                 os_claim_amounts = []
                 for accident_period in reserving_class_claims.index:
-                    os_claim_amount = os_data_reserving_class[(os_data_reserving_class['LOSSDATE'].dt.to_period('Q') == accident_period) &
-                                                              (os_data_reserving_class['As at'].dt.to_period('Q') == eop.to_period('Q'))]['Amount'].sum()
+                    os_claim_amount = os_data_reserving_class[
+                        (os_data_reserving_class['LOSSDATE'].dt.to_period(DEFAULT_GRAIN.period_alias) == accident_period)
+                        & (os_data_reserving_class['As at'].dt.to_period(DEFAULT_GRAIN.period_alias) == eop.to_period(DEFAULT_GRAIN.period_alias))
+                    ]['Amount'].sum()
                     os_claim_amounts.append(os_claim_amount)
 
                 reserving_class_claims['OS Claims'] = os_claim_amounts
@@ -1127,6 +1365,28 @@ def run_generate_summary(
 
                 reserving_class_data = pd.merge(summed_ep, reserving_class_claims, on='Accident_Period', how='left').fillna(0)
                 reserving_class_data['Reported LR'] = (reserving_class_data['Reported Claims'] / reserving_class_data['EP'].replace(0, np.nan)).fillna(0)
+
+                # Large-claim ADD-BACK path. The base columns above stay whole (they must
+                # tie to the ledger, and BF reads its known component from them); the split
+                # is carried in two extra columns that the ultimate formulas net out and
+                # add back. Written only in add-back mode, so every other run keeps the six
+                # historic base columns and reproduces the goldens byte for byte.
+                if exclusion is not None and exclusion.adds_back:
+                    periods = list(reserving_class_data['Accident_Period'])
+                    reserving_class_data['Large Paid'] = exclusion.period_totals(
+                        filtered_data[filtered_data['Type'] == 'Paid'], periods
+                    )
+                    large_os_rows = exclusion.excluded_rows(os_data_reserving_class)
+                    # Same as-at selection as the OS base column above — deliberately the
+                    # identical expression, so `Large OS` can never be measured on a
+                    # different basis from the column it is netted out of.
+                    reserving_class_data['Large OS'] = [
+                        float(large_os_rows[
+                            (large_os_rows['LOSSDATE'].dt.to_period(DEFAULT_GRAIN.period_alias) == p)
+                            & (large_os_rows['As at'].dt.to_period(DEFAULT_GRAIN.period_alias) == eop.to_period(DEFAULT_GRAIN.period_alias))
+                        ]['Amount'].sum()) if not large_os_rows.empty else 0.0
+                        for p in periods
+                    ]
                 #reserving_class_data['Reported LR'] = reserving_class_data.apply(lambda row: '0%' if row['EP'] == 0 else '{:.0f}%'.format(row['Reported LR']), axis=1)
                 
                 
@@ -1137,81 +1397,42 @@ def run_generate_summary(
                     
                     if paid_data is not None:
                         paid_data_reserving_class = paid_data[(paid_data['RESERVINGCLASS'] == reserving_class) & (paid_data['RI_TREATY_TYPE'] == ri_type) & (paid_data['HEADOFDAMAGE'] == head_of_damage)]
+                        # TRIANGLE path — always filtered when an exclusion is active, in
+                        # every mode. This is what makes the factors attritional.
+                        if exclusion is not None and exclusion.filters_triangles:
+                            paid_data_reserving_class = exclusion.apply(paid_data_reserving_class)
                         triangle_df_paid = calculate_incremental_triangle(paid_data_reserving_class, start_period, end_period)
                         triangle_df_paid.to_excel(writer, sheet_name='Paid Claims Triangle', index=False)
 
                         cumulative_triangle_df_paid = calculate_cumulative_triangle(triangle_df_paid)
                         cumulative_triangle_df_paid.to_excel(writer, sheet_name='Paid Claims Triangle', startrow=len(triangle_df_paid) + 3, index=False)
+                        label_block(writer.book['Paid Claims Triangle'], len(triangle_df_paid) + 4, "cumulative")
 
                         age_to_age_paid_df = calculate_age_to_age_factors(cumulative_triangle_df_paid)
                         start_row_age_to_age = len(triangle_df_paid) + 3 + len(cumulative_triangle_df_paid) + 3
                         age_to_age_paid_df.to_excel(writer, sheet_name='Paid Claims Triangle', startrow=start_row_age_to_age, index=False)
 
-                        numeric_age_to_age = age_to_age_paid_df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')
-                        simple_paid_averages = numeric_age_to_age.mean(axis=0)
-                        simple_paid_cdf = simple_paid_averages[::-1].cumprod()[::-1]
-                        avg_paid_df = pd.DataFrame([simple_paid_averages], columns=age_to_age_paid_df.columns)
-                        avg_paid_df['Accident Period'] = 'Simple Avg LDF'
-                        avg_paid_df.to_excel(writer, sheet_name='Paid Claims Triangle', startrow=len(triangle_df_paid) + 3 + len(cumulative_triangle_df_paid) + 3 + len(age_to_age_paid_df) + 2, index=False)
-
-                        simple_paid_cdf = simple_paid_averages[::-1].cumprod()[::-1]  # reverse cumulative product
-                        simple_paid_cdf_df = pd.DataFrame([simple_paid_cdf], columns=cumulative_triangle_df_paid.columns)
-                        simple_paid_cdf_df['Accident Period'] = 'Simple Avg CDF'
-                        simple_paid_cdf_df.to_excel(writer, sheet_name='Paid Claims Triangle', startrow=len(triangle_df_paid) + 3 + len(cumulative_triangle_df_paid) + 3 + len(age_to_age_paid_df) + 4, index=False, header=False)
-
-                        cumulative_triangle_df_paid_numeric = cumulative_triangle_df_paid.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')
-                        cumulative_sums = cumulative_triangle_df_paid_numeric.sum(axis=0)
-                        weighted_paid_ldfs = []
-                        num_accident_periods = cumulative_triangle_df_paid.shape[0]
-
-                        for i in range(1, len(cumulative_sums)):
-                            num_periods = num_accident_periods - i
-                            if num_periods > 0:
-                                numerator = cumulative_triangle_df_paid_numeric.iloc[:num_periods, i].sum()
-                                denominator = cumulative_triangle_df_paid_numeric.iloc[:num_periods, i - 1].sum()
-                                if denominator != 0:
-                                    weighted_paid_ldfs.append(numerator / denominator)
-                                else:
-                                    weighted_paid_ldfs.append(np.nan)
-                            else:
-                                weighted_paid_ldfs.append(np.nan)
-                        weighted_paid_ldfs.insert(0, np.nan)
-                        weighted_avg_ldf_df = pd.DataFrame([weighted_paid_ldfs], columns=cumulative_triangle_df_paid.columns[1:])
-                        weighted_avg_ldf_df['Accident Period'] = 'Weighted Avg LDF'
-                        weighted_avg_ldf_df = weighted_avg_ldf_df[['Accident Period'] + list(cumulative_triangle_df_paid.columns[1:])]
-                        start_row_weighted_ldf = start_row_age_to_age + len(age_to_age_paid_df) + 5
-                        weighted_avg_ldf_df.to_excel(writer, sheet_name='Paid Claims Triangle', startrow=start_row_weighted_ldf, index=False, header=False)
-
-                        weighted_paid_ldfs_series = pd.Series(weighted_paid_ldfs)
-                        weighted_paid_cdf = weighted_paid_ldfs_series[::-1].cumprod()[::-1]
-                        weighted_paid_cdf_df = pd.DataFrame([weighted_paid_cdf], columns=cumulative_triangle_df_paid.columns[1:])
-                        weighted_paid_cdf_df['Accident Period'] = 'Weighted Avg CDF'
-                        weighted_paid_cdf_df = weighted_paid_cdf_df[['Accident Period'] + list(cumulative_triangle_df_paid.columns[1:])]
-                        weighted_paid_cdf_df.to_excel(writer, sheet_name='Paid Claims Triangle', startrow=len(triangle_df_paid) + 3 + len(cumulative_triangle_df_paid) + 3 + len(age_to_age_paid_df) + 6, index=False, header=False)
-                        
-                        selected_ldf_start_row = start_row_weighted_ldf + 3
-                        ws = writer.book['Paid Claims Triangle']
-                        ws.cell(row=selected_ldf_start_row, column=1, value='Selected LDF')
-
-                        for col_idx in range(2, len(cumulative_triangle_df_paid.columns) + 1):
-                            col_letter = get_column_letter(col_idx)
-                            ws.cell(row=selected_ldf_start_row, column=col_idx, value=f'=1')  # Placeholder formula
-
-                        # Write Selected CDF formulas
-                        selected_cdf_start_row = selected_ldf_start_row + 1
-                        ws.cell(row=selected_cdf_start_row, column=1, value='Selected CDF')
-
-                        last_col_letter = get_column_letter(len(cumulative_triangle_df_paid.columns))
-                        last_col_ref = f'${last_col_letter}${selected_ldf_start_row}'
-
-                        for col_idx in range(2, len(cumulative_triangle_df_paid.columns) + 1):
-                            col_letter = get_column_letter(col_idx)
-                            formula = f'=PRODUCT({col_letter}{selected_ldf_start_row}:{last_col_ref})'
-                            ws.cell(row=selected_cdf_start_row, column=col_idx, value=formula)
-                        
+                        # Benchmark block + Selected rows, from the shared implementation.
+                        # `start_row_age_to_age` is a 0-based to_excel startrow; the a2a block
+                        # occupies its header plus one row per accident period, so the
+                        # benchmark header goes two 1-based rows below its last row.
+                        label_block(writer.book['Paid Claims Triangle'], start_row_age_to_age + 1, "age_to_age")
+                        benchmark_start = start_row_age_to_age + len(age_to_age_paid_df) + 3
+                        selected_ldf_start_row = write_triangle_benchmarks(
+                            writer.book['Paid Claims Triangle'],
+                            cumulative_triangle_df_paid,
+                            benchmark_start,
+                        )
+                        write_selected_rows(
+                            writer.book['Paid Claims Triangle'],
+                            cumulative_triangle_df_paid,
+                            selected_ldf_start_row,
+                        )
 
                     if os_data is not None:
                         os_data_reserving_class = os_data[(os_data['RESERVINGCLASS'] == reserving_class) & (os_data['RI_TREATY_TYPE'] == ri_type) & (os_data['HEADOFDAMAGE'] == head_of_damage)]
+                        if exclusion is not None and exclusion.filters_triangles:
+                            os_data_reserving_class = exclusion.apply(os_data_reserving_class)
                         os_triangle_df = calculate_incremental_triangle(os_data_reserving_class, start_period, end_period, is_os=True)
                         #os_triangle_df.to_excel(writer, sheet_name='OS Claims Triangle', index=False)
 
@@ -1225,67 +1446,24 @@ def run_generate_summary(
                     age_to_age_reported_df = calculate_age_to_age_factors(reported_triangle_df)
                     age_to_age_reported_df.to_excel(writer, sheet_name='Reported Triangle', startrow=len(reported_triangle_df) + 3, index=False)
 
-                    numeric_age_to_age_reported = age_to_age_reported_df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')
-
-                    simple_reported_averages = numeric_age_to_age_reported.mean(axis=0)
-                    simple_reported_cdf = simple_reported_averages[::-1].cumprod()[::-1]
-                    
-                    avg_reported_df = pd.DataFrame([simple_reported_averages], columns=age_to_age_reported_df.columns)
-                    avg_reported_df['Accident Period'] = 'Simple Avg LDF'
-                    avg_reported_df.to_excel(writer, sheet_name='Reported Triangle', startrow=len(reported_triangle_df) + 3 + len(age_to_age_reported_df) + 2, index=False)
-
-                    simple_reported_cdf = simple_reported_averages[::-1].cumprod()[::-1]
-                    simple_reported_cdf_df = pd.DataFrame([simple_reported_cdf], columns=reported_triangle_df.columns)
-                    simple_reported_cdf_df['Accident Period'] = 'Simple Avg CDF'
-                    simple_reported_cdf_df.to_excel(writer, sheet_name='Reported Triangle', startrow=len(reported_triangle_df) + 3 + len(age_to_age_reported_df) + 4, index=False, header=False)
-
-                    reported_triangle_df_numeric = reported_triangle_df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')
-                    cumulative_sums_reported = reported_triangle_df_numeric.sum(axis=0)
-                    weighted_reported_ldfs = []
-                    num_accident_periods = reported_triangle_df.shape[0]
-                    for i in range(1, len(cumulative_sums_reported)):
-                        num_periods = num_accident_periods - i
-                        if num_periods > 0:
-                            numerator = reported_triangle_df_numeric.iloc[:num_periods, i].sum()
-                            denominator = reported_triangle_df_numeric.iloc[:num_periods, i - 1].sum()
-                            if denominator != 0:
-                                weighted_reported_ldfs.append(numerator / denominator)
-                            else:
-                                weighted_reported_ldfs.append(np.nan)
-                        else:
-                            weighted_reported_ldfs.append(np.nan)
-                    weighted_reported_ldfs.insert(0, np.nan)
-                    weighted_avg_ldf_df = pd.DataFrame([weighted_reported_ldfs], columns=reported_triangle_df.columns[1:])
-                    weighted_avg_ldf_df['Accident Period'] = 'Weighted Avg LDF'
-                    weighted_avg_ldf_df = weighted_avg_ldf_df[['Accident Period'] + list(reported_triangle_df.columns[1:])]
-                    weighted_avg_ldf_df.to_excel(writer, sheet_name='Reported Triangle', startrow=len(reported_triangle_df) + 3 + len(age_to_age_reported_df) + 5, index=False, header=False)
-
-                    weighted_reported_ldfs_series = pd.Series(weighted_reported_ldfs)
-                    weighted_reported_cdf = weighted_reported_ldfs_series[::-1].cumprod()[::-1]
-                    weighted_reported_cdf_df = pd.DataFrame([weighted_reported_cdf], columns=reported_triangle_df.columns[1:])
-                    weighted_reported_cdf_df['Accident Period'] = 'Weighted Avg CDF'
-                    weighted_reported_cdf_df = weighted_reported_cdf_df[['Accident Period'] + list(reported_triangle_df.columns[1:])]
-                    weighted_reported_cdf_df.to_excel(writer, sheet_name='Reported Triangle', startrow=len(reported_triangle_df) + 3 + len(age_to_age_reported_df) + 6, index=False, header=False)
-                    
-                    selected_ldf_start_row_reported = len(reported_triangle_df) + 3 + len(age_to_age_reported_df) + 8
-                    ws_reported = writer.book['Reported Triangle']
-                    ws_reported.cell(row=selected_ldf_start_row_reported, column=1, value='Selected LDF')
-
-                    for col_idx in range(2, len(reported_triangle_df.columns) + 1):
-                        col_letter = get_column_letter(col_idx)
-                        ws_reported.cell(row=selected_ldf_start_row_reported, column=col_idx, value=f'=1')  # Placeholder formula
-
-                    # Write Selected CDF formulas for Reported Triangle
-                    selected_cdf_start_row_reported = selected_ldf_start_row_reported + 1
-                    ws_reported.cell(row=selected_cdf_start_row_reported, column=1, value='Selected CDF')
-
-                    last_col_letter_reported = get_column_letter(len(reported_triangle_df.columns))
-                    last_col_ref_reported = f'${last_col_letter_reported}${selected_ldf_start_row_reported}'
-
-                    for col_idx in range(2, len(reported_triangle_df.columns) + 1):
-                        col_letter = get_column_letter(col_idx)
-                        formula = f'=PRODUCT({col_letter}{selected_ldf_start_row_reported}:{last_col_ref_reported})'
-                        ws_reported.cell(row=selected_cdf_start_row_reported, column=col_idx, value=formula)
+                    # Same shared implementation as the Paid sheet. The Reported sheet has
+                    # no incremental block, so its a2a block starts one block earlier — which
+                    # is exactly why the block labels exist rather than shared row arithmetic.
+                    start_row_age_to_age_reported = len(reported_triangle_df) + 3
+                    label_block(writer.book['Reported Triangle'], start_row_age_to_age_reported + 1, "age_to_age")
+                    benchmark_start_reported = (
+                        start_row_age_to_age_reported + len(age_to_age_reported_df) + 3
+                    )
+                    selected_ldf_start_row_reported = write_triangle_benchmarks(
+                        writer.book['Reported Triangle'],
+                        reported_triangle_df,
+                        benchmark_start_reported,
+                    )
+                    write_selected_rows(
+                        writer.book['Reported Triangle'],
+                        reported_triangle_df,
+                        selected_ldf_start_row_reported,
+                    )
 
                 #reserve_summary = generate_reserve_summary(reserving_class_data, reserving_class, head_of_damage, ri_type, output_file_path, ibnr_summaries, output_dir)
                 #if reserve_summary is not None:

@@ -4,6 +4,7 @@ from rest_framework import serializers
 from accounts.models import Role
 
 from .models import Membership, Organization
+from .models import ReservingClassAlias
 
 User = get_user_model()
 
@@ -171,3 +172,127 @@ class ScenarioSetSerializer(serializers.ModelSerializer):
             Scenario(scenario_set=obj, order=i, **s) for i, s in enumerate(scenarios)
         ])
         return obj
+
+
+# ---------------------------------------------------------------------------
+# UPR method policy (requirement 4)
+# ---------------------------------------------------------------------------
+
+from module1_engine.upr_methods import (  # noqa: E402
+    MATCH_MODES,
+    METHOD_KEYS,
+    METHODS,
+    UNGATED_METHODS,
+)
+
+from .models import UprMethodPolicy, UprMethodRule  # noqa: E402
+
+
+class UprMethodRuleSerializer(serializers.ModelSerializer):
+    reservingClass = serializers.CharField(
+        source="reserving_class", required=False, allow_blank=True
+    )
+    productType = serializers.CharField(
+        source="product_type", required=False, allow_blank=True
+    )
+    matchMode = serializers.CharField(source="match_mode", required=False)
+    methodLabel = serializers.SerializerMethodField()
+    needsGuard = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UprMethodRule
+        fields = [
+            "id", "reservingClass", "productType", "matchMode",
+            "method", "params", "priority", "order",
+            "methodLabel", "needsGuard",
+        ]
+
+    def get_methodLabel(self, obj) -> str:
+        m = METHODS.get(obj.method)
+        return m.label if m else obj.method
+
+    def get_needsGuard(self, obj) -> bool:
+        """True for methods that weight by issue date alone and so need a
+        book-suitability check before they can be activated."""
+        return obj.method in UNGATED_METHODS
+
+    def validate_method(self, value):
+        if value not in METHOD_KEYS:
+            raise serializers.ValidationError(
+                f"Unknown method; expected one of {list(METHOD_KEYS)}."
+            )
+        return value
+
+    def validate_match_mode(self, value):
+        if value and value not in MATCH_MODES:
+            raise serializers.ValidationError(
+                f"Unknown match mode; expected one of {list(MATCH_MODES)}."
+            )
+        return value
+
+    def validate(self, attrs):
+        method = attrs.get("method", getattr(self.instance, "method", None))
+        params = attrs.get("params", getattr(self.instance, "params", {})) or {}
+        if method == "flat_percentage":
+            try:
+                pct = float(params.get("percent"))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"params": "flat_percentage requires a numeric 'percent'."}
+                ) from None
+            if not 0.0 <= pct <= 1.0:
+                raise serializers.ValidationError(
+                    {"params": "'percent' is a fraction and must be between 0 and 1."}
+                )
+        if method == "full_premium_in_period":
+            months = params.get("lookback_months", 3)
+            try:
+                months = int(months)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"params": "'lookback_months' must be a whole number of months."}
+                ) from None
+            if not 1 <= months <= 24:
+                raise serializers.ValidationError(
+                    {"params": "'lookback_months' must be between 1 and 24."}
+                )
+        return attrs
+
+
+class UprMethodPolicySerializer(serializers.ModelSerializer):
+    rules = UprMethodRuleSerializer(many=True, required=False)
+    isActive = serializers.BooleanField(source="is_active", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    createdBy = serializers.CharField(source="created_by.email", read_only=True, default=None)
+
+    class Meta:
+        model = UprMethodPolicy
+        fields = [
+            "id", "name", "description", "note", "version",
+            "isActive", "createdAt", "createdBy", "rules",
+        ]
+        read_only_fields = ["version"]
+
+    def create(self, validated):
+        rules = validated.pop("rules", [])
+        obj = UprMethodPolicy.objects.create(**validated)
+        UprMethodRule.objects.bulk_create(
+            [UprMethodRule(policy=obj, order=i, **r) for i, r in enumerate(rules)]
+        )
+        return obj
+
+
+class ReservingClassAliasSerializer(serializers.ModelSerializer):
+    created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
+
+    class Meta:
+        model = ReservingClassAlias
+        fields = (
+            "id",
+            "alias",
+            "canonical",
+            "note",
+            "created_by_email",
+            "created_at",
+        )
+        read_only_fields = ("id", "created_by_email", "created_at")

@@ -277,6 +277,21 @@ class ScenarioSetApiTests(TestCase):
             }, format="json")
             self.assertEqual(resp.status_code, 400, f"{lever} {mag} should be rejected")
 
+    def test_a_runner_without_scenarios_view_can_still_read_the_sets(self):
+        """module2.run alone must be enough to READ sets — otherwise an org with
+        custom roles produces a user who can run jobs but cannot see what to run."""
+        runner = User.objects.create_user("runner", "runner@example.com", "pw")
+        _give_role(runner, "RunOnly", ["module2.run"], self.org)
+        client = APIClient()
+        client.force_authenticate(runner)
+        self.assertEqual(client.get("/api/scenario-sets/").status_code, 200)
+        # ...but still cannot create or edit one.
+        self.assertEqual(
+            client.post("/api/scenario-sets/", {"name": "X", "scenarios": []},
+                        format="json").status_code,
+            403,
+        )
+
     def test_manage_permission_required_to_create(self):
         other = User.objects.create_user("ro", "ro@example.com", "pw")
         _give_role(other, "ReadOnly", ["scenarios.view"], self.org)
@@ -378,3 +393,122 @@ class SensitivityTaskEndToEndTests(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, Module1Job.Status.FAILED)
         self.assertIn("scenario", job.error_message.lower())
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class SensitivityProcessScopeTests(TestCase):
+    """Process scope end-to-end, including input inheritance from a chained job.
+
+    This is the path the UI takes: the user picks a completed Cash Flow Allocation
+    job and Previous Period / Expense CF come from its durable input archive.
+    """
+
+    FIXTURES = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "benchmarks" / "fixtures" / "m2_process_ref"
+    )
+
+    def setUp(self):
+        if not (self.FIXTURES / "Combined_Summary.xlsx").is_file():
+            self.skipTest("process reference fixtures not available")
+        self.org = Organization.objects.create(name="PS", slug="ps")
+        self.user = User.objects.create_user("ps", "ps@example.com", "pw")
+        _give_role(self.user, "ActuaryPS", ["module2.run"], self.org)
+
+    def _process_job_with_archive(self):
+        """A completed process job carrying Previous Period + Expense CF."""
+        import io as _io
+        import zipfile
+        from django.core.files.base import ContentFile
+        from processing.tasks import INPUT_ARCHIVE_EXPENSE, INPUT_ARCHIVE_PREVIOUS
+
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_PROCESS,
+            status=Module1Job.Status.SUCCESS,
+        )
+        buf = _io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(INPUT_ARCHIVE_PREVIOUS,
+                        (self.FIXTURES / "Previous_period.xlsx").read_bytes())
+            zf.writestr(INPUT_ARCHIVE_EXPENSE,
+                        (self.FIXTURES / "Expense-CF.xlsx").read_bytes())
+        job.input_archive.save(f"{job.id}-inputs.zip", ContentFile(buf.getvalue()), save=True)
+        return job
+
+    def test_process_scope_inherits_inputs_and_reports_lic_and_lrc(self):
+        from processing.tasks import run_module2_sensitivity_task
+        from processing.utils import init_module2_sensitivity_job_dirs
+
+        source = self._process_job_with_archive()
+
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_SENSITIVITY,
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        combined_dir, _, _ = init_module2_sensitivity_job_dirs(job)
+        (combined_dir / "Combined_Summary.xlsx").write_bytes(
+            (self.FIXTURES / "Combined_Summary.xlsx").read_bytes()
+        )
+        job.input_meta = {
+            "files": {}, "scope": "process", "selected_ulr": [],
+            "accounting_period": 2024,
+            "process_job_id": str(source.id),
+            "scenarios": [
+                {"label": "RA +10%", "lever": "ra", "magnitude": 0.10},
+                {"label": "Disc +5bp", "lever": "discount", "magnitude": 5},
+                {"label": "ULR +5pp", "lever": "ulr", "magnitude": 0.05},
+            ],
+        }
+        job.save(update_fields=["input_meta"])
+
+        run_module2_sensitivity_task(str(job.id))
+        job.refresh_from_db()
+        self.assertEqual(job.status, Module1Job.Status.SUCCESS, job.error_message)
+
+        payload = job.input_meta["sensitivity"]
+        keys = {m["key"] for m in payload["measures"]}
+        self.assertTrue({"lic_bop", "lic_eop", "lrc_bop", "lrc_eop"} <= keys)
+
+        # BOP is prior-period given data: no shock may move it.
+        for entry in payload["values"]:
+            for key in ("lic_bop", "lrc_bop"):
+                self.assertAlmostEqual(
+                    entry["measures"][key]["__TOTAL__"],
+                    payload["base"][key]["__TOTAL__"],
+                    places=4,
+                    msg=f"{key} moved under {entry['scenario']}",
+                )
+
+        # The sensitivity job re-archives its inputs, so it is itself reusable.
+        job.refresh_from_db()
+        self.assertTrue(job.input_archive)
+
+    def test_process_scope_without_inputs_fails_with_an_actionable_message(self):
+        from processing.tasks import run_module2_sensitivity_task
+        from processing.utils import init_module2_sensitivity_job_dirs
+
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_SENSITIVITY,
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        combined_dir, _, _ = init_module2_sensitivity_job_dirs(job)
+        (combined_dir / "Combined_Summary.xlsx").write_bytes(
+            (self.FIXTURES / "Combined_Summary.xlsx").read_bytes()
+        )
+        job.input_meta = {
+            "files": {}, "scope": "process", "selected_ulr": [],
+            "accounting_period": 2024,
+            "scenarios": [{"label": "RA +10%", "lever": "ra", "magnitude": 0.10}],
+        }
+        job.save(update_fields=["input_meta"])
+
+        run_module2_sensitivity_task(str(job.id))
+        job.refresh_from_db()
+        self.assertEqual(job.status, Module1Job.Status.FAILED)
+        # Must name the missing input, not send the user to check sheet formats.
+        self.assertIn("Previous Period", job.error_message)

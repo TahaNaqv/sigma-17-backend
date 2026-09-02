@@ -23,6 +23,9 @@ from __future__ import annotations
 RATIO = "ratio"
 FACTOR = "factor"
 NUMBER = "number"
+#: Integer tallies (`Factor Count`). Distinct from NUMBER so "3 factors averaged" renders as
+#: `3` rather than money-style `3.00`.
+COUNT = "count"
 
 
 def _norm(header) -> str:
@@ -89,6 +92,80 @@ def _is_integer_named(header) -> bool:
         return True
     except (TypeError, ValueError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Row-kind classification (triangle sheets)
+# ---------------------------------------------------------------------------
+#
+# Column classification cannot describe a triangle sheet. Its columns are development
+# periods, and its KIND VARIES BY ROW — the same column holds a cumulative amount
+# (3,463,357), an age-to-age factor (1.015748) and a factor count (3). Classified by column,
+# every triangle column is `number`, and the preview's per-column decimal heuristic then
+# renders the factor as `1.01`: an actuary cannot read their own development factors.
+#
+# So triangle sheets get a second, row-wise pass keyed on the column-1 label. Every other
+# sheet returns None and is unaffected.
+
+#: Sheets whose kind varies by row rather than by column.
+_ROW_KIND_SHEETS = {_norm("Paid Claims Triangle"), _norm("Reported Triangle")}
+
+#: Labels naming a block; rows below one inherit its kind until the next label.
+_BLOCK_ROW_KINDS = {
+    _norm("Incremental Triangle"): NUMBER,
+    _norm("Cumulative Triangle"): NUMBER,
+    _norm("Age-to-Age Factors"): FACTOR,
+}
+
+#: The leading block of each triangle sheet, which has no label row above it (a label there
+#: would become the pandas header). Mirrors `module1_engine.engine.LEADING_BLOCK`.
+_LEADING_BLOCK_KIND = {
+    _norm("Paid Claims Triangle"): NUMBER,   # incremental
+    _norm("Reported Triangle"): NUMBER,      # cumulative
+}
+
+#: `Factor Count` is a tally. `Accident Period` is a repeated block HEADER whose cells hold the
+#: development-period numbers 0, 1, 2 ... — integers, and emphatically not factors, which is
+#: what they would become by inheriting the age-to-age block's kind.
+_COUNT_ROW_LABELS = {_norm("Factor Count"), _norm("Accident Period")}
+
+
+def _benchmark_row_kind(label: str) -> str | None:
+    """`Simple Avg LDF`, `Ex-Hi-Lo Avg CDF`, `Selected LDF`, `Median CDF`, ... are all factors.
+
+    Matched by suffix rather than by an allowlist of every basis name: WP1 grew this block
+    from four rows to thirteen, and a new average basis must not silently render as money.
+    """
+    if label in _COUNT_ROW_LABELS:
+        return COUNT
+    if label.endswith(" ldf") or label.endswith(" cdf") or label in {"median ldf", "median cdf"}:
+        return FACTOR
+    return None
+
+
+def classify_rows(sheet_name: str, row_labels: list) -> list[str] | None:
+    """Per-row kinds for a sheet whose kind varies by row, else ``None``.
+
+    ``None`` — not an empty list — so a caller can tell "this sheet is column-classified"
+    from "this sheet has no rows".
+    """
+    sheet = _norm(sheet_name)
+    if sheet not in _ROW_KIND_SHEETS:
+        return None
+
+    current = _LEADING_BLOCK_KIND.get(sheet, NUMBER)
+    kinds: list[str] = []
+    for label in row_labels:
+        key = _norm(label)
+        block = _BLOCK_ROW_KINDS.get(key)
+        if block is not None:
+            # The label row itself carries no data.
+            current = block
+            kinds.append(NUMBER)
+            continue
+        benchmark = _benchmark_row_kind(key)
+        kinds.append(benchmark if benchmark is not None else current)
+    return kinds
 
 
 def classify_columns(sheet_name: str, headers: list) -> list[str]:

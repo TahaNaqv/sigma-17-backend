@@ -10,9 +10,11 @@ import numpy as np
 import pandas as pd
 
 from core.excel import READ_ENGINE, WRITE_ENGINE
+from core.grain import DEFAULT_GRAIN
 from core.profiling import stage_timer
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from module2_engine.pattern_override import PatternOverride
     from module2_engine.scenarios import ScenarioShock
 
 
@@ -47,10 +49,14 @@ def _read_excel_any(path_or_bytes: str | bytes | io.BytesIO, sheet_name: str, **
 
 
 def calculate_sequence(merged_df: pd.DataFrame) -> pd.Series:
+    # Accident-period ordering. Previously an inline `str(x).split("-Q")`, which was the
+    # single hardest-coded coupling to the quarterly booking basis in the codebase; the
+    # grain now owns the label format. DEFAULT_GRAIN is quarterly, so this is unchanged.
+    grain = DEFAULT_GRAIN
     unique_periods = merged_df["Accident_Period"].unique()
     sorted_periods = sorted(
         unique_periods,
-        key=lambda x: (int(str(x).split("-Q")[0]), int(str(x).split("-Q")[1])),
+        key=lambda x: grain.sort_key(x),
         reverse=True,
     )
     period_to_sequence = {period: idx for idx, period in enumerate(sorted_periods)}
@@ -92,7 +98,9 @@ def calculate_additional_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def convert_annual_to_quarterly(rate: pd.Series) -> pd.Series:
-    return (1 + rate) ** (1 / 4) - 1
+    """Annual spot -> booking-grain spot. Kept under its historic name because callers and
+    tests reference it; the arithmetic now comes from the grain."""
+    return DEFAULT_GRAIN.annual_to_period_rate(rate)
 
 
 def convert_to_discount_rate(spot_rate: pd.Series) -> pd.Series:
@@ -101,12 +109,18 @@ def convert_to_discount_rate(spot_rate: pd.Series) -> pd.Series:
 
 def calculate_discount_rates(data: pd.DataFrame, column_name: str) -> pd.DataFrame:
     quarterly_spot_rates = convert_annual_to_quarterly(data[column_name])
-    quarterly_periods = np.arange(len(data) * 4)
+    # One row of the Discount Rate sheet is an annual band; it expands into
+    # `periods_per_year` booking periods.
+    quarterly_periods = np.arange(len(data) * DEFAULT_GRAIN.periods_per_year)
     quarterly_data = pd.DataFrame(
         {
             "Quarterly": quarterly_periods,
-            "Yearly Spot Rate": np.repeat(data[column_name], 4),
-            "Quarterly Spot Rate": np.repeat(quarterly_spot_rates, 4),
+            "Yearly Spot Rate": np.repeat(
+                data[column_name], DEFAULT_GRAIN.periods_per_year
+            ),
+            "Quarterly Spot Rate": np.repeat(
+                quarterly_spot_rates, DEFAULT_GRAIN.periods_per_year
+            ),
         }
     )
     quarterly_data["Quarterly Discount Rate"] = convert_to_discount_rate(
@@ -177,6 +191,7 @@ def _compute_allocate_frames(
     selected_ulr_rows: list[dict[str, Any]] | None = None,
     *,
     shock: "ScenarioShock | None" = None,
+    pattern_override: "PatternOverride | None" = None,
 ) -> tuple[dict[str, pd.DataFrame], list[dict[str, Any]]]:
     """Compute every allocate sheet as an in-memory frame. No workbook is written.
 
@@ -362,6 +377,20 @@ def _compute_allocate_frames(
         )
     with stage_timer("m2.allocate.additional_matrix"):
         additional_matrix = calculate_additional_matrix(merged_df)
+    # Payment-pattern override, LIC path. Applied here — before Future CF is
+    # distributed — so it reaches FutureCF, the discounted CF frames and therefore
+    # Discounting Impact. Rows of non-overridden classes are untouched.
+    # NB the engine's own matrix already equals the re-based from-inception pattern
+    # (plan section 1.3), so supplying the derived pattern is a provable no-op.
+    if pattern_override is not None:
+        from module2_engine.pattern_override import apply_to_additional_matrix
+
+        pattern_override.note_horizon(
+            additional_matrix.shape[1], merged_df["RESERVINGCLASS"].unique()
+        )
+        additional_matrix = apply_to_additional_matrix(
+            additional_matrix, merged_df, pattern_override
+        )
     additional_matrix.columns = [int(col) for col in additional_matrix.columns]
     merged_df = pd.concat([merged_df, additional_matrix], axis=1)
 
@@ -402,6 +431,14 @@ def _compute_allocate_frames(
         .rename(columns={col: int(col) for col in dynamic_columns})
         .reset_index()
     )
+    # Payment-pattern override, LRC path. Assigned DIRECTLY rather than re-derived from
+    # the (already overridden) matrix: the run-off convolution consumes a from-inception
+    # pattern, while the matrix holds per-row conditional patterns. Re-deriving would
+    # reintroduce the conditional-average artefact this feature exists to escape.
+    if pattern_override is not None:
+        from module2_engine.pattern_override import apply_to_avg_df
+
+        avg_df = apply_to_avg_df(avg_df, pattern_override)
 
     ibnr_summary_by_class_uwy = (
         gross_only.groupby(["RESERVINGCLASS", "UWY"])["IBNR"].sum().reset_index()
@@ -644,6 +681,7 @@ def _build_allocate_outputs(
     selected_ulr_rows: list[dict[str, Any]] | None = None,
     *,
     shock: "ScenarioShock | None" = None,
+    pattern_override: "PatternOverride | None" = None,
 ) -> tuple[bytes, list[dict[str, Any]], dict[str, pd.DataFrame]]:
     """Compute the allocate frames and serialize them. Unchanged contract.
 
@@ -651,7 +689,8 @@ def _build_allocate_outputs(
     returned a 3-tuple; corrected here.)
     """
     allocate_sheets, ulr_rows = _compute_allocate_frames(
-        combined_summary_bytes, selected_ulr_rows, shock=shock
+        combined_summary_bytes, selected_ulr_rows, shock=shock,
+        pattern_override=pattern_override,
     )
     return _write_allocate_workbook(allocate_sheets), ulr_rows, allocate_sheets
 
@@ -800,9 +839,18 @@ def create_ifrs_summary(diff_df: pd.DataFrame, combined_summary: pd.DataFrame) -
     return ifrs_summary[combined_cols + move_cols]
 
 
-def run_module2_allocate(combined_summary_bytes: bytes) -> dict[str, Any]:
-    out_bytes, ulr_rows, _ = _build_allocate_outputs(combined_summary_bytes, None)
-    return {"workbook_bytes": out_bytes, "ulr_rows": ulr_rows}
+def run_module2_allocate(
+    combined_summary_bytes: bytes,
+    *,
+    pattern_override: "PatternOverride | None" = None,
+) -> dict[str, Any]:
+    out_bytes, ulr_rows, _ = _build_allocate_outputs(
+        combined_summary_bytes, None, pattern_override=pattern_override
+    )
+    result: dict[str, Any] = {"workbook_bytes": out_bytes, "ulr_rows": ulr_rows}
+    if pattern_override is not None:
+        result["override_report"] = pattern_override.report.to_dict()
+    return result
 
 
 def _derive_cy_py_payment(
@@ -878,6 +926,7 @@ def _process_intermediates(
     selected_ulr_rows: list[dict[str, Any]],
     *,
     shock: "ScenarioShock | None" = None,
+    pattern_override: "PatternOverride | None" = None,
 ) -> ProcessFrames:
     """Run the Module 2 process pipeline up to the IFRS Summary frame.
 
@@ -887,7 +936,8 @@ def _process_intermediates(
     # Rebuild allocate outputs with selected ULR; reuse the in-memory frames
     # instead of re-reading the workbook we just produced (plan §2.2).
     out_bytes, _, allocate_sheets = _build_allocate_outputs(
-        combined_summary_bytes, selected_ulr_rows, shock=shock
+        combined_summary_bytes, selected_ulr_rows, shock=shock,
+        pattern_override=pattern_override,
     )
     # NB: read these two back from the serialized workbook rather than reusing the
     # in-memory frames. The xlsx round-trip normalises dtypes, and the downstream
@@ -983,6 +1033,8 @@ def run_module2_process(
     expense_cf_bytes: bytes,
     accounting_period: int,
     selected_ulr_rows: list[dict[str, Any]],
+    *,
+    pattern_override: "PatternOverride | None" = None,
 ) -> bytes:
     frames = _process_intermediates(
         combined_summary_bytes,
@@ -990,6 +1042,7 @@ def run_module2_process(
         expense_cf_bytes,
         accounting_period,
         selected_ulr_rows,
+        pattern_override=pattern_override,
     )
     allocate_sheets = frames.allocate_sheets
     result_df = frames.result_df
@@ -1052,6 +1105,7 @@ def run_module2_movement(
     classes: list[str] | None = None,
     uwys: list[int] | None = None,
     overrides=None,
+    pattern_override: "PatternOverride | None" = None,
 ) -> tuple[bytes, Any]:
     """Produce the IFRS 17 movement-analysis disclosure workbook.
 
@@ -1074,6 +1128,7 @@ def run_module2_movement(
         expense_cf_bytes,
         accounting_period,
         selected_ulr_rows,
+        pattern_override=pattern_override,
     )
     result = build_sama_movement(frames, classes=classes, uwys=uwys, overrides=overrides)
     xlsx = render_sama_workbook(result, reporting_date=reporting_date)

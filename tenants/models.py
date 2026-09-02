@@ -22,6 +22,26 @@ class Organization(models.Model):
         related_name="created_organizations",
     )
 
+    class PreflightMode(models.TextChoices):
+        STRICT = "strict", "Strict — block a run with reconciliation errors"
+        PERMISSIVE = "permissive", "Permissive — warn but run anyway"
+
+    #: How the Module 1 input pre-flight gate behaves for this organization.
+    #:
+    #: `strict` is the default and the intended steady state: a run whose reserving classes do
+    #: not reconcile produces a plausible workbook containing a wrong number, which is worse
+    #: than no workbook. `permissive` exists only so that enabling the gate cannot hard-block
+    #: an organization mid-valuation; the UI labels it as a temporary state.
+    preflight_mode = models.CharField(
+        max_length=16,
+        choices=PreflightMode.choices,
+        default=PreflightMode.STRICT,
+        help_text=(
+            "Strict blocks a reserving run whose claims and premium classes do not "
+            "reconcile. Permissive runs anyway and records the report."
+        ),
+    )
+
     # Retention policy: output ZIPs are eligible for cleanup this many days
     # after job success. Null means retain indefinitely.
     default_output_retention_days = models.PositiveIntegerField(
@@ -177,3 +197,206 @@ class Scenario(models.Model):
             "magnitude": float(self.magnitude),
             "scope_classes": list(self.scope_classes or []),
         }
+
+
+# ---------------------------------------------------------------------------
+# UPR earning-method policy (requirement 4)
+# ---------------------------------------------------------------------------
+
+
+class UprMethodPolicy(models.Model):
+    """A named, versioned set of UPR earning-method rules for one organization.
+
+    UPR methodology is a standing actuarial choice, not a per-run option: it must be stable
+    across periods, auditable, and reproducible. So it is a durable org-level object,
+    versioned on edit, and snapshotted into each job's ``input_meta`` — a run replays with
+    the exact rules it used even if the policy is later changed or deleted.
+
+    The shipped default is pro-rata for every class, which is **proven** bit-identical to
+    the historic hard-coded behaviour (docs/UPR_METHOD_SELECTION_PLAN.md §1.3), so adopting
+    the feature changes nothing until a rule is deliberately added.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="upr_policies", db_index=True
+    )
+    name = models.CharField(max_length=128)
+    description = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True, db_index=True)
+    #: Free text stamped on the version. Also carries the recorded acknowledgement when a
+    #: user overrides a book-suitability block (see module1_engine.upr_guard).
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="created_upr_policies",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name", "-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name", "version"],
+                name="uniq_upr_policy_version",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "name"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_upr_policy_per_name",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "is_active"], name="uprpolicy_org_active_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+    def resolved(self) -> list[dict]:
+        """Plain-dict rule list for the engine. No Django types cross the boundary."""
+        return [r.to_rule_dict() for r in self.rules.all()]
+
+
+class UprMethodRule(models.Model):
+    """One rule. Blank ``reserving_class`` matches every class; blank ``product_type``
+    makes the rule the class-level default.
+
+    Matching is normalised and never literal — exact-literal matching is precisely why the
+    historic CAR/EAR and marine branches never fired (plan §1.2).
+    """
+
+    class MatchMode(models.TextChoices):
+        EXACT = "exact", "Exact"
+        CONTAINS = "contains", "Contains"
+        PREFIX = "prefix", "Starts with"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy = models.ForeignKey(
+        UprMethodPolicy, on_delete=models.CASCADE, related_name="rules"
+    )
+    reserving_class = models.CharField(max_length=128, blank=True)
+    product_type = models.CharField(max_length=128, blank=True)
+    match_mode = models.CharField(
+        max_length=16, choices=MatchMode.choices, default=MatchMode.EXACT
+    )
+    method = models.CharField(max_length=32)
+    params = models.JSONField(default=dict, blank=True)
+    priority = models.IntegerField(default=0)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        scope = self.reserving_class or "(all classes)"
+        if self.product_type:
+            scope = f"{scope} / {self.product_type}"
+        return f"{scope} -> {self.method}"
+
+    def to_rule_dict(self) -> dict:
+        return {
+            "method": self.method,
+            "reserving_class": self.reserving_class,
+            "product_type": self.product_type,
+            "match_mode": self.match_mode,
+            "params": dict(self.params or {}),
+            "priority": self.priority,
+        }
+
+
+class ReservingClassAlias(models.Model):
+    """Maps a spelling found in an input file onto the premium file's spelling.
+
+    The engine joins premium to claims by exact string equality on RESERVINGCLASS, and a
+    mismatch is silent: on the reference book the claims files say `Health` where premium says
+    `Health Insurance`, and all 3,044 of those rows — 35,503,674 — are discarded without a
+    warning (defect F1).
+
+    Case and punctuation differences never need an alias; `core.normalize.canonical_key`
+    absorbs those. An alias is for a genuine naming difference, and because it changes which
+    claims enter a reserve it is an actuarial decision: recorded per organization, attributed,
+    and never applied automatically from a suggestion.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="reserving_class_aliases"
+    )
+    #: As found in a claims or premium file.
+    alias = models.CharField(max_length=128)
+    #: The spelling the premium file uses, which the engine loops over.
+    canonical = models.CharField(max_length=128)
+    #: Denormalised match key, so lookups and the uniqueness constraint ignore case and
+    #: punctuation — otherwise "health" and "Health " could both be stored and disagree.
+    alias_key = models.CharField(max_length=128, editable=False, db_index=True)
+    note = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_class_aliases",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["canonical", "alias"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "alias_key"], name="uniq_class_alias_per_org"
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        from core.normalize import canonical_key
+
+        self.alias = str(self.alias).strip()
+        self.canonical = str(self.canonical).strip()
+        self.alias_key = canonical_key(self.alias)
+        return super().save(*args, **kwargs)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        from core.normalize import canonical_key
+
+        if not str(self.alias).strip() or not str(self.canonical).strip():
+            raise ValidationError("Both the alias and the canonical class are required.")
+        if canonical_key(self.alias) == canonical_key(self.canonical):
+            raise ValidationError(
+                "The alias and the canonical class are already the same once case and "
+                "punctuation are ignored, so no alias is needed."
+            )
+        # One hop only. A chain (A->B, B->C) would make the resolved value depend on
+        # iteration order, which is not something an audit could reconstruct.
+        siblings = ReservingClassAlias.objects.filter(organization=self.organization)
+        if self.pk:
+            siblings = siblings.exclude(pk=self.pk)
+        if siblings.filter(alias_key=canonical_key(self.canonical)).exists():
+            raise ValidationError(
+                f"'{self.canonical}' is itself an alias. Point this alias at the class the "
+                f"premium file actually uses instead of chaining."
+            )
+        if siblings.filter(canonical=self.alias).exists():
+            raise ValidationError(
+                f"'{self.alias}' is already used as a canonical class by another alias."
+            )
+
+    def __str__(self) -> str:
+        return f"{self.alias} -> {self.canonical}"
+
+
+def alias_map_for(organization) -> dict[str, str]:
+    """`{alias: canonical}` for one organization, or `{}`.
+
+    Resolved to a plain dict at job-creation time and snapshotted onto the job, never read
+    live at run time: a re-run months later must apply the aliases the run actually used.
+    """
+    if organization is None:
+        return {}
+    return {
+        a.alias: a.canonical
+        for a in ReservingClassAlias.objects.filter(organization=organization)
+    }

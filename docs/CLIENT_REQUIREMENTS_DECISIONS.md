@@ -115,6 +115,45 @@ Correcting it changes **no filed number** and requires no restatement or sign-of
 display-layer defect in a decision aid. It should nonetheless be **communicated** to the client:
 LDF selections made in prior periods by eye against this row were informed by a bad benchmark.
 
+### F5 — `Weighted Avg LDF` is written one development column too far right
+
+**Found 2026-09-01 while planning WP1.** The engine writes the weighted link ratio for
+`dev i-1 → dev i` at development column `i`, while the age-to-age block, `Simple Avg` and
+`Selected LDF` all put the `dev j → dev j+1` factor at column `j`. A one-column shift.
+
+Visible directly in the frozen golden for `Banker's Blanket Payment GROSS 2017-12.xlsx`: the same
+factor `1.015748` sits at `Simple Avg` column 3 and `Weighted Avg` column 4.
+
+Because F3 leaves `Simple Avg` unusable, `Weighted Avg` is today the **only** usable benchmark
+row — so copying it into `Selected LDF` is the natural and effectively the only action available.
+Doing so applies every factor one development period late and overstates the total Paid CL
+ultimate by **+178.2%** (829,920,872 against 298,356,105 correctly aligned). Seven workbooks are
+affected; worst is `Miscellaneous Payment GROSS` at **+299.3%**.
+
+The repository already holds a correct implementation of the same quantity —
+`module1_engine/triangles.py::volume_weighted_ldf`, built for WP6 — so the fix is consolidation
+onto one implementation, not new code.
+
+**Consequence:** identical in kind to F3. Nothing reads the row, so no filed number changes; but
+it is the benchmark prior LDF selections were made against, so it belongs in the same advisory.
+
+### F6 — every un-edited web reserve develops at a flat CDF of 2.0
+
+**Found 2026-09-01 (surfaced by WP5's `exclude_from_ldf_only` measuring +0.00% end-to-end).**
+`Selected LDF` is seeded with the literal string `=1` and `Selected CDF` with `=PRODUCT(...)`.
+Nothing ever evaluates them — the engine writes the workbook and reads it back with
+`data_only=True`, which returns `None` for a formula no spreadsheet has opened — so
+`selected_cdf_row_to_series` applies its blank → **2.0** default to every cohort.
+
+Any Module 1 job not put through the Update Reserve editor therefore reports
+`ultimate = 2 x paid-to-date` exactly. On the reference book that is 144,172,678 against a
+paid-to-date of 72,086,339.
+
+This is not a defect to fix in isolation — `2.0` is a deliberate, documented fallback — but it
+establishes that **WP1's "apply as Selected LDF" is the only mechanism by which a web-only user
+obtains a real actuarial factor.** It moves WP1 from a refinement to a prerequisite for the
+product being actuarially meaningful without Excel.
+
 ### F4 — `D&O` has premium but no claims
 
 Produces reserve workbooks with no claims data at all. Legitimate for a class with no claims
@@ -145,6 +184,53 @@ disclosure must never depend on the reader inferring the convention.
 
 ### D2 — Override reach for pattern and cash flow (requirements 2, 3)
 
+**Verified 2026-08-21 (requirement 2).** The sheet named `Payment Pattern` holds a *conditional*
+future-payout average across cohorts of every maturity, **not** a from-inception payment pattern —
+it puts 48% of ENGINEERING claims in the first quarter against an actual from-inception 6%, and
+runs 1.7x–3.4x shorter in duration than the true pattern across most classes. The LRC run-off
+convolution needs a from-inception pattern, so it is currently fed the wrong object. A hand
+replication reproducing the engine to the digit confirms the override moves **only** the
+discounted LRC (`PAA_LRC` and `GMM LRC_Undiscounted` are pattern-independent because the pattern
+sums to 1). A second pass corrected that: the override moves the **LIC** discounting path too
+(`Discounting Impact` −115.6%, `Change in Discounting Impact` −168.7% on a long-tail test
+pattern) and by more than it moves LRC (−5.0%). It also established that the engine's LIC matrix
+*already is* the re-based from-inception pattern — provable to 0.00e+00 — which makes "supplying
+the derived pattern is a no-op" the feature's strongest regression check. Full detail and the
+corrected acceptance map: `PAYMENT_PATTERN_OVERRIDE_PLAN.md` §1.3 / §1.3b.
+
+Consequently requirements 2 and 3 were split into WP3a / WP3b — see the roadmap.
+
+**Verified 2026-08-21 (requirement 3).** Three findings reshaped WP3b:
+
+1. **The reconciliation gate is the feature, not a validation nicety.** `Discounting Impact`
+   subtracts the *supplied* cash-flow total, not `Future CF`, so any shortfall is absorbed
+   into a figure labelled a discounting effect — and `GROSS LIC = components + Discounting
+   Impact`. The genuine discounting effect is only −3.60% of Future CF; a 5% under-supply
+   reports 2.4x that and understates LIC by 10,272,145. The error exceeds the entire real
+   effect and wears its name.
+2. **A class-grain, total-preserving cash-flow override is mathematically identical to the
+   requirement-2 pattern override** (verified: same `FutureCF`, same `Discounting Impact`).
+   WP3b therefore only earns its 15.5 days if the client wants finer grain or externally
+   sourced *amounts* — see `CASHFLOW_OVERRIDE_PLAN.md` §9.
+3. **Overriding the LIC matrix leaks into LRC.** `avg_df` is derived from that matrix, so a
+   cash-flow override moved `GMM LRC_Discounted_CY` by −2.388% with no LRC input supplied.
+   The earlier "cash flow drives LIC only" note was an intent, not a behaviour. Fixed by
+   computing `avg_df` from the pre-override matrix, which makes `GMM LRC_Discounted_CY` a
+   structural invariant of WP3b.
+
+**Requirement 3 descoped, 2026-08-21.** The engine's cash-flow projection has exactly one
+degree of freedom per (class, treaty) — the from-inception pattern, which requirement 2 now
+exposes (no-op identity to 2.22e-16). UWY carries **zero** timing information (identical rows
+across 520 of 592 groups, spread `0.000e+00`), and `IBNR Summary` — the sole source of timing
+— has no UWY column, so a finer grain would be *inconsistent* with the CDFs that produced the
+amounts, not merely redundant. No external cash-flow projection exists to import: the client's
+`Expense-CF` input is actual ledger cash flows, a different object. What is genuinely missing
+is visibility (`FutureCF` is 74,280 cells against a 20,000-cell preview guard, so it cannot be
+read in-app) and reach (the override is process-step-only and labelled "payment pattern").
+**WP3b is therefore descoped from ~15.5 days to ~3**: a cash-flow projection view plus
+surfacing the existing override on allocate. Sections 1-8 of the plan stay shelved against a
+specific trigger — see `CASHFLOW_OVERRIDE_PLAN.md` §10.
+
 * **Payment pattern override drives both** the LRC run-off (`avg_df`) **and** the LIC incremental
   matrix (`additional_matrix`). If the actuary asserts a payout pattern, it is incoherent for LIC
   cash flows to develop on a different one.
@@ -168,12 +254,43 @@ disclosure must never depend on the reader inferring the convention.
   `(RESERVINGCLASS, PRODUCTTYPE) → (RESERVINGCLASS, *) → system default`.
 * **All matching is case-insensitive on a normalised string** (casefold, collapse whitespace, strip
   punctuation). Exact-literal matching is the direct cause of F2 and is removed, not repeated.
-* **Seeded default: `pro_rata_daily` for every class** — provably bit-identical to today because it
-  is what 100% of reference rows already do (F2). No client mapping is required to ship safely.
+* **Seeded default: `pro_rata_daily` for every class** — **proven** bit-identical, not argued: a
+  prototype resolver reproduces all three current blocks across 14,791 rows x 12 valuation dates
+  with `max |diff| = 0.000e+00` (`UPR_METHOD_SELECTION_PLAN.md` §1.3).
+* **Eligibility (`ISSUEDATE <= valuation date`) is a SEPARATE gate from the earning method.** In
+  the current code it is implicit in `np.select(..., default=0)`. A registry that folds it into
+  each method cannot reproduce today's output and would grant UPR to policies not yet issued.
 * **Six methods ship:** `pro_rata_daily`, `sum_of_digits`, `full_premium_in_period`, `eighths`,
-  `twenty_fourths`, `flat_percentage`.
+  `twenty_fourths`, `flat_percentage` — but `eighths` / `twenty_fourths` sit behind a
+  **book-suitability guard**, not merely a dropdown. Measured at **−243%** and **−429%** on the
+  reference book: they weight by issue date alone and ignore the risk period, so the 699 rows
+  (4.7%) of negative endorsement worth −3.16bn that pro-rata correctly gives ~0.109 weight get
+  ~0.426. The book is *nominally* suited (92.8% annual terms), which makes the failure more
+  dangerous, not less.
+* **Impact is material where it lands**: the intended policy (Engineering → `sum_of_digits`,
+  Marine → `full_premium_in_period`) moves the book **+0.86%** but Engineering **+51.25%** and
+  Marine **−6.20%**. That is why the impact preview is required, not optional.
 
 ### D4 — Triangle granularity (requirement 5)
+
+**Verified 2026-08-21.** Two findings reshaped WP6:
+
+1. **The "derive quarterly LDFs from monthly" bridge is mathematically invalid** and has been
+   removed. Measured error against the reference claims: **+408.98%** at development 0. A
+   quarterly accident period aggregates three monthly cohorts at *different maturities* (the
+   2016-01 cohort has 3 months of development by the end of 2016Q1, 2016-02 has 2, 2016-03
+   has 1), so a quarterly link ratio is not the product of three monthly link ratios at any
+   offset. The valid route is through **ultimates → an implied quarterly CDF**, which is
+   exact and injectable through the existing `ldf_overrides` path.
+2. **Monthly is statistically unusable on much of this book.** Applying the valid route
+   produces a **+92.16%** higher total ultimate, driven by a tail CDF of **69.8** vs 25.5.
+   That is sparsity: median claims per cell falls from 146 (quarterly) to 24 (monthly), and
+   at the reserving grain **4 of 14 class-treaty triangles have fewer than 10 non-empty
+   monthly cells** — Banker's Blanket has 3 cells from 6 claims. Every triangle therefore
+   carries a credibility score, and the derive action is disabled below a floor.
+
+The core decision — booking stays quarterly, `PeriodGrain` introduced, diagnostic-first —
+survived verification unchanged.
 
 **Diagnostic-first. Booking stays quarterly.** Confirmed, not hedged: `LIC_BOP` carries 2,144 rows
 keyed on quarterly `Accident_Period` **strings** across 24 quarters. Re-granularising the booking
@@ -196,27 +313,101 @@ configuration change plus a data migration rather than a rewrite.
   * never assume a row count per claim.
 * **Selection modes:** top-N (default N = 10, configurable) **and** amount threshold. Threshold is
   the more defensible basis period-over-period and is offered alongside.
-* **Treatment modes**, default first:
-  1. `exclude_from_ldf_only` — **default.** Removed from the age-to-age calculation only; stays in
-     the reserve base. Changes the factors, not the booked reserve.
-  2. `exclude_and_add_back` — attritional triangle developed, excluded claims' actual paid + OS
-     re-added as a separate `Large Loss` line, with an optional user-entered large-loss IBNR loading.
-  3. `exclude_entirely` — available, loudly warned. Understates the ultimate.
-* Reference concentration: top 10 claims = **29.9% of total paid**. The book is large-loss dominated
-  and exclusions will move factors materially — the feature is high-impact and must be auditable.
+* **Treatment modes** — default **corrected 2026-09-01** after measurement:
+  1. `exclude_and_add_back` — **default.** Attritional triangle developed with attritional
+     factors; the excluded claims re-enter at their **known incurred (paid + case)**, carrying no
+     IBNR of their own. The only mode whose factors and base describe the same population.
+     Measured **−2.7%** against base — revised from −3.8% on 2026-09-01: the earlier figure added
+     back paid-to-date alone, which silently assigns an open large claim a zero case reserve
+     (PKR 5,069,200 on the reference book).
+     The base is **not** filtered in this mode — Paid/OS/Reported must keep tying to the ledger,
+     and BF reads its known component from them. The split is carried in two extra base columns,
+     `Large Paid` / `Large OS`. See `LARGE_CLAIMS_EXCLUSION_PLAN.md` §10.2.
+  2. `exclude_from_ldf_only` — factors ex-large applied to a base that still contains them.
+     **No longer the default**: measured **+13.3%**, the largest move of the three and in the
+     direction opposite to intent, because it double-counts large-claim development. One
+     accident quarter rose **36.9%**. Available, with the effect stated before selection.
+  3. `exclude_entirely` — available, loudly warned. Measured −8.2%; understates the ultimate.
+* **Excluding large claims can RAISE the reserve.** Large claims pay early and large, so removing
+  them makes the attritional book look slower-developing (development-4 factor +18.7%). Per-cohort
+  impact is a required part of the UI, not a nicety.
+* Reference concentration: top 10 = **22.3% of gross paid** on the correct `GROSS`/`Payment` slice.
+  (An earlier 29.9% summed across treaty and head of damage — the very error the slice rule exists
+  to prevent.) OS must rank on the **latest as-at**: a naive sum across snapshots overstates the top
+  claim **6.5×** and returns a different claim first.
 * **Every exclusion is snapshotted with the job**: claim numbers, mode, threshold, actor, timestamp.
 
 ### D6 — Average bases (requirement 7)
 
-Fix `Simple Avg` outright (F3) — no sign-off required. Ship the average bases as a **selection
-surface**, not just extra workbook rows: all-periods, excluding-high-and-low, last-4, last-8,
-volume-weighted variants, and free custom period selection via per-cell exclusion. Selected basis
-writes through the **existing `ldf_overrides` path**; no new write contract.
+**Revised 2026-09-01 after measurement.** Fix `Weighted Avg` alignment (F5) **and** `Simple Avg`
+(F3) — neither needs sign-off, because neither row is read by any computation. Ship the average
+bases as a **selection surface**, not just extra workbook rows: all-periods,
+excluding-high-and-low, last-4, last-8, median, volume-weighted variants, and free custom period
+selection via per-cell exclusion. Selected basis writes through the **existing `ldf_overrides`
+path**; no new write contract.
+
+Basis selection is the **largest single lever in the nine requirements**. Total Paid CL ultimate
+across every reserve workbook, on paid-to-date of 72,086,339:
+
+| basis | total | vs today |
+|---|---|---|
+| today's default (CDF = 2.0, F6) | 144,172,678 | — |
+| ex-high-low / median | 240,311,243 | +66.7% |
+| volume-weighted (correctly aligned) | 298,356,105 | +107.0% |
+| simple average (after F3) | 478,635,253 | +232.0% |
+| `Weighted Avg` as written today (F5) | 829,920,872 | +475.6% |
+
+Three measured constraints on the UI, all mandatory:
+
+* **`last_4` / `last_8` are inert on the reference book** — 0 of 448 development columns have more
+  than 3 valid factors, so `last_4` returns the simple average to the cent. They acquire content
+  only with a longer experience period or WP6's **monthly grain**. Requirement 7 therefore depends
+  on requirement 5 to be useful.
+* **`ex_hi_lo` and `median` are identical on this book.** Corrected while building: they
+  coincide up to **four** cells (an even median *is* the mean of the middle two), so a column
+  needs **five** valid factors before the two bases differ at all.
+* Consequently **every average must show the count it averaged**, and the engine writes a
+  `Factor Count` row. Without it an actuary picks "Last 4", sees nothing change, and believes a
+  judgement was applied that was not.
 
 ### D7 — Visual system (requirement 8)
 
 Proposed, built, then shown — not solicited. Scope fixed in `docs/UI_VISUAL_SYSTEM_PLAN.md`.
 Colour is never the sole signal (accessibility, and these pages print in mono).
+
+**Revised 2026-09-01 after auditing the built frontend.** "Some colouring" is a live
+accessibility defect, not a polish request. Measured against the actual tokens in
+`src/index.css` and the actual classes in `src/`:
+
+* **Every semantic colour fails WCAG AA as text in one theme** — `--primary` 3.19 in light
+  (57 uses), `--destructive` 3.94 in dark (51 uses), `--warning` 2.85 and `--success` 2.89 in
+  light. 125 usages. `--warning` and `--success` fail even the 3:1 large-text threshold.
+* **The primary button's own white label is 3.19:1 in light mode** — the most-clicked element
+  in the product.
+* **All 25 distinct literal Tailwind palette classes** (56 occurrences, 14 files) fail AA in a
+  reachable theme; six are light-only and paint white panels into the dark default.
+* **The output preview cannot format a triangle sheet**: kind varies by ROW there, so a
+  development factor of `1.015748` renders as **1.01** and `Factor Count` 3 renders as "3.00".
+  An actuary cannot read their own factors. WP1 enlarged this from four benchmark rows to
+  thirteen.
+
+Both themes are live: `next-themes` defaults to dark, and `ThemeToggle` in the header makes
+light one click away and persistent.
+
+**The palette fix is visible and needs showing before merge.** `--primary` moves
+`187 72% 40%` → `187 72% 32%` (same teal, deeper) so that both text and button labels reach
+4.74:1; `--success` and `--warning` likewise. Dark mode — the default, and what the client has
+seen — is unchanged apart from one new `--destructive-text` token, because in a dark theme a
+colour used as both text and fill needs two values (the page background and the fill's label
+sit on opposite sides of it).
+
+The durable deliverable is `src/lib/palette.test.ts`: it parses `index.css`, checks every
+token × role × theme against AA, and rejects any literal palette class outside an allowlist —
+turning this class of defect from "caught in review, sometimes" into "cannot merge".
+
+**WP7 is now a standalone pass, not threaded.** It was sequenced through WP1-WP6; those have
+all shipped, so one palette change, one cell renderer adopted across seven surfaces, and one
+visual-regression baseline is strictly better than seven separate reviews of the same decision.
 
 ---
 
@@ -227,16 +418,26 @@ make confident judgements against wrong numbers.
 
 | WP | Scope | Req | Plan | Gate |
 |---|---|---|---|---|
-| **WP0** | Class reconciliation + pre-flight gate (F1, F4) | — | `DATA_INTEGRITY_PREFLIGHT_PLAN.md` | Blocks all |
-| **WP1** | Simple-Avg fix + average selection + strikethrough | 7 | `LDF_AVERAGE_SELECTION_PLAN.md` | — |
-| **WP2** | UPR method registry + per-LOB policy (F2) | 4 | `UPR_METHOD_SELECTION_PLAN.md` | — |
-| **WP3** | Payment-pattern & cash-flow overrides | 2, 3 | `PATTERN_CASHFLOW_OVERRIDE_PLAN.md` | — |
+| **WP0** | Class reconciliation + pre-flight gate (F1, F4) | — | `DATA_INTEGRITY_PREFLIGHT_PLAN.md` §9 | **implemented 2026-09-02** |
+| **WP1** | LDF benchmark fixes (F3, F5) + average selection + strikethrough | 7 | `LDF_AVERAGE_SELECTION_PLAN.md` §10 | **implemented 2026-09-01** |
+| **WP2** | UPR method registry + per-LOB policy (F2) | 4 | `UPR_METHOD_SELECTION_PLAN.md` | **implemented 2026-08-21** |
+| **WP3a** | Payment-pattern override | 2 | `PAYMENT_PATTERN_OVERRIDE_PLAN.md` | — |
+| **WP3b** | Cash-flow view + override reach ("lite") | 3 | `CASHFLOW_OVERRIDE_PLAN.md` §10 | **descoped 15.5d → ~3d** |
 | **WP4** | Sensitivity / scenario runner | 1 | `SENSITIVITY_TESTING_PLAN.md` | **independent — verified 2026-08-21** |
-| **WP5** | Large-claims summary + exclusion | 6 | `LARGE_CLAIMS_EXCLUSION_PLAN.md` | after WP1 (shares grid) |
-| **WP6** | Triangle granularity (diagnostic) + `PeriodGrain` | 5 | `TRIANGLE_GRANULARITY_PLAN.md` | after WP1 |
-| **WP7** | Visual system | 8 | `UI_VISUAL_SYSTEM_PLAN.md` | threaded throughout |
+| **WP5** | Large-claims summary + exclusion | 6 | `LARGE_CLAIMS_EXCLUSION_PLAN.md` §10 | **implemented 2026-09-01** |
+| **WP6** | Triangle granularity (diagnostic) + `PeriodGrain` | 5 | `TRIANGLE_GRANULARITY_PLAN.md` | **implemented 2026-08-21** |
+| **WP7** | Visual system + palette accessibility | 8 | `UI_VISUAL_SYSTEM_PLAN.md` §10 | **implemented 2026-09-01** |
 
-WP1 and WP5 share the triangle grid component; WP1 builds it, WP5 extends it.
+WP1 and WP5 share the triangle grid component. **WP5 shipped first and built it**
+(`src/components/TriangleGrid.tsx`), so WP1 extends rather than creates it. The grid already
+distinguishes claim-driven from factor-driven exclusion visually, which WP1 needs.
+
+**WP1 was re-scoped on 2026-09-01 after verification and is now the highest-value remaining work
+package.** Three findings drive that: F5 overstates the reserve by +178% for anyone who copies the
+only usable benchmark row; F6 means every un-edited web reserve is a flat `2 x paid`; and basis
+selection spans 5.8x end to end (D6). Nothing else in WP2-WP7 moves a number by that much. It stays
+behind WP0 — selection tools on a broken join are worse than no selection tools — but it should be
+the first feature built after it, ahead of WP3a.
 
 **WP4 was re-scoped on 2026-08-21 after verification: it is independent and can start immediately.**
 The earlier "after WP2, WP3" ordering assumed its scenario payload had to carry their parameters; it
@@ -296,8 +497,12 @@ None blocks any work package.
 |---|---|---|
 | Confirm F1/F2 against a **current production** claims + premium extract | Sizing WP0's reconciliation table | WP0 ships the gate anyway; it reports rather than assumes |
 | Which classes should take which UPR method | Realising WP2's benefit | Ships seeded pro-rata everywhere = today's behaviour; client fills in via UI |
-| Whether excluded large losses carry a separate IBNR loading | WP5 mode 2 refinement | Field ships optional, defaults to nil loading |
+| ~~Whether excluded large losses carry a separate IBNR loading~~ | ~~WP5~~ | **Decided 2026-09-01, no longer open.** They carry none: an excluded claim re-enters at its known incurred (paid + case), so its case reserve *is* its ultimate. That is the standard treatment, and it is precisely why its development must not run through an attritional factor. A separate loading can be added later as an explicit percentage without disturbing this default. |
 
-**Advisory to send:** F3 means prior-period LDF selections were made against a defective Simple
-Average benchmark. No restatement is implied — the numbers entered are the numbers used — but the
-selections warrant review at the next valuation.
+**Advisory to send (revised 2026-09-01):** F3 **and F5** mean prior-period LDF selections were made
+against defective benchmark rows — a Simple Average that collapses to zero, and a Weighted Average
+displaced one development period. No restatement is implied: nothing reads those rows, so the
+numbers entered are the numbers used. But the *selections* warrant review at the next valuation,
+and F5 is the more serious of the two because `Weighted Avg` was the only row that looked usable.
+Both defects are inherited from `sigma-17-desktop-app/module1.py` (`:1124`, `:1150`), so any
+selection made in the desktop tool carries them too.

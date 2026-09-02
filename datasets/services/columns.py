@@ -26,6 +26,9 @@ PREMIUM_DB_TO_EXCEL = {
 }
 
 CLAIMS_PAID_DB_TO_EXCEL = {
+    # Claim identity — required for large-claim exclusion to reach the dataset path at all.
+    "claim_number": "CLAIMNUMBER",
+    "reported_date": "REPORTEDDATE",
     "amount_paid": "AMOUNTPAID",
     "amount_recovered": "AMOUNTRECOVERED",
     "issue_date": "ISSUEDATE",
@@ -38,6 +41,8 @@ CLAIMS_PAID_DB_TO_EXCEL = {
 }
 
 CLAIMS_OS_DB_TO_EXCEL = {
+    "claim_number": "CLAIMNUMBER",
+    "reported_date": "REPORTEDDATE",
     "amount_outstanding": "AMOUNTOUTSTANDING",
     "issue_date": "ISSUEDATE",
     "loss_date": "LOSSDATE",
@@ -121,6 +126,14 @@ MOVEMENT_OVERRIDE_DB_TO_EXCEL = {
 }
 
 
+# Payment pattern. Only the identity column is fixed — the development-period columns
+# are dynamic (0, 1, 2, ... N), so the wide<->long conversion lives in
+# `datasets/services/wide_pattern.py` rather than in a static header map.
+PAYMENT_PATTERN_DB_TO_EXCEL = {
+    "reserving_class": "RESERVINGCLASS",
+}
+
+
 DB_TO_EXCEL_FOR_KIND = {
     Dataset.Kind.PREMIUM: PREMIUM_DB_TO_EXCEL,
     Dataset.Kind.CLAIMS_PAID: CLAIMS_PAID_DB_TO_EXCEL,
@@ -129,6 +142,7 @@ DB_TO_EXCEL_FOR_KIND = {
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PREVIOUS_PERIOD_LIC_DB_TO_EXCEL,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PREVIOUS_PERIOD_UPR_DB_TO_EXCEL,
     Dataset.Kind.MOVEMENT_OVERRIDE: MOVEMENT_OVERRIDE_DB_TO_EXCEL,
+    Dataset.Kind.PAYMENT_PATTERN: PAYMENT_PATTERN_DB_TO_EXCEL,
 }
 
 
@@ -170,5 +184,8 @@ REQUIRED_FIELDS_FOR_KIND = {
     Dataset.Kind.MOVEMENT_OVERRIDE: (
         "reserving_class",
         "uwy",
+    ),
+    Dataset.Kind.PAYMENT_PATTERN: (
+        "reserving_class",
     ),
 }

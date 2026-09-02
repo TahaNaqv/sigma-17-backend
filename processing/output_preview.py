@@ -10,7 +10,7 @@ from zipfile import ZipFile
 
 from openpyxl import load_workbook
 
-from .output_column_kinds import classify_columns
+from .output_column_kinds import classify_columns, classify_rows
 
 
 @dataclass(frozen=True)
@@ -198,6 +198,7 @@ def read_sheet_page(
                 "total_rows": 0,
                 "columns": [],
                 "column_kinds": [],
+                "row_kinds": None,
                 "rows": [],
             }
 
@@ -212,6 +213,7 @@ def read_sheet_page(
                 "total_rows": 0,
                 "columns": [],
                 "column_kinds": [],
+                "row_kinds": None,
                 "rows": [],
             }
 
@@ -232,6 +234,7 @@ def read_sheet_page(
                 "total_rows": total_rows,
                 "columns": columns,
                 "column_kinds": column_kinds,
+                "row_kinds": None,
                 "rows": [],
             }
 
@@ -250,6 +253,25 @@ def read_sheet_page(
             if cell_count > max_cells:
                 raise ValueError("Requested page exceeds output preview cell limit.")
 
+        # Per-ROW display hint, for sheets whose kind varies down the sheet rather than
+        # across it. A triangle holds cumulative money, age-to-age factors and a factor count
+        # in the SAME columns, so column kinds alone render a 1.015748 factor as "1.01".
+        # `None` for every other sheet, which keeps column classification authoritative there.
+        #
+        # Classified over the WHOLE sheet, then sliced to the page: a row's kind is inherited
+        # from the block label above it, so classifying a page in isolation would restart that
+        # inheritance at the page boundary and mislabel every row on page 2.
+        row_kinds = None
+        if classify_rows(sheet_key, []) is not None:
+            labels = [
+                cell[0]
+                for cell in ws.iter_rows(
+                    min_row=2, max_row=max_row, max_col=1, values_only=True
+                )
+            ]
+            all_kinds = classify_rows(sheet_key, labels) or []
+            row_kinds = all_kinds[start_data_row_idx - 1 : end_data_row_idx]
+
         return {
             "file": _normalize_zip_path(file_path),
             "sheet": sheet_key,
@@ -258,6 +280,7 @@ def read_sheet_page(
             "total_rows": total_rows,
             "columns": columns,
             "column_kinds": column_kinds,
+            "row_kinds": row_kinds,
             "rows": rows,
         }
     finally:

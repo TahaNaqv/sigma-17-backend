@@ -70,9 +70,10 @@ def _materialize_job_snapshots(job: Module1Job) -> None:
     for kind, snap_ids in snaps_by_kind.items():
         if not snap_ids:
             continue
-        if kind == Dataset.Kind.MOVEMENT_OVERRIDE:
-            # Consumed as a DataFrame by the movement layer, not staged as an
-            # engine input sheet — see _load_movement_overrides.
+        if kind in (Dataset.Kind.MOVEMENT_OVERRIDE, Dataset.Kind.PAYMENT_PATTERN):
+            # Consumed as in-memory rows, not staged as an engine input sheet —
+            # see _load_movement_overrides / _load_pattern_override. Staging them
+            # would write throwaway workbooks the engine never reads.
             continue
         snapshots = list(
             DatasetSnapshot.objects.filter(
@@ -144,6 +145,162 @@ def _load_movement_overrides(job: Module1Job):
     return df.rename(columns={"reserving_class": "RESERVINGCLASS", "uwy": "UWY"})
 
 
+class PreflightBlocked(Exception):
+    """A strict-mode run whose inputs do not reconcile. Carries the report for the job record."""
+
+    def __init__(self, report):
+        self.report = report
+        blocking = [m for m in report.messages if m.severity == "error"]
+        headline = blocking[0].text if blocking else "Input pre-flight failed."
+        # Name the classes. The headline carries the SIZE of the problem, which is what makes
+        # it legible; the class names are what the user has to act on, and an error message
+        # that omits them sends them back to the UI to find out.
+        classes = []
+        for message in blocking:
+            name = message.detail.get("class")
+            if name and name not in classes:
+                classes.append(name)
+        named = f" Affected classes: {', '.join(classes)}." if classes else ""
+        suggestion = ""
+        if report.suggestions:
+            best = report.suggestions[0]
+            suggestion = (
+                f" Adding the alias '{best['alias']}' -> '{best['canonical']}' would resolve "
+                f"this."
+            )
+        super().__init__(
+            f"Input check failed, so no workbooks were produced. {headline}{named}"
+            f"{suggestion} Fix the input files, add a reserving-class alias, or ask an "
+            f"administrator to switch this organization to permissive mode."
+        )
+
+
+def _read_engine_inputs(job: Module1Job):
+    """Load the three staged input folders as frames, for pre-flight only.
+
+    Reads the same files the engine will read, AFTER dataset snapshots have been materialised,
+    so the check sees exactly what the run will see. Pre-flight is a read; the engine loads its
+    own frames independently and is not handed these.
+    """
+    import pandas as pd
+
+    from core.excel import READ_ENGINE
+
+    def _load(kind: str):
+        folder = job_input_subdir(job, kind)
+        frames = []
+        for path in sorted(Path(folder).glob("*.xlsx")):
+            if path.name.startswith("~$"):
+                continue
+            try:
+                frames.append(pd.read_excel(path, engine=READ_ENGINE))
+            except Exception:
+                logger.warning("preflight.unreadable", extra={"file": path.name})
+        return pd.concat(frames, ignore_index=True) if frames else None
+
+    return _load("premium"), _load("claims_paid"), _load("claims_os")
+
+
+def _run_preflight(job: Module1Job, aliases: dict[str, str]):
+    """Reconcile the staged inputs and decide whether the run may proceed.
+
+    The report is persisted on EVERY run, not only on failure: which classes reconciled is part
+    of the audit record for a reserve, not merely an error path.
+    """
+    from processing.services.preflight import build_preflight_report
+    from module1_engine.engine import apply_class_aliases
+
+    premium, paid, os_frame = _read_engine_inputs(job)
+    # Reconcile the POST-alias vocabulary — otherwise an alias that fixes the data would still
+    # be reported as an error and the gate would block a correct run.
+    premium = apply_class_aliases(premium, aliases)
+    paid = apply_class_aliases(paid, aliases)
+    os_frame = apply_class_aliases(os_frame, aliases)
+
+    report = build_preflight_report(premium, paid, os_frame)
+
+    mode = getattr(job.organization, "preflight_mode", "strict") if job.organization else "strict"
+    job.refresh_from_db(fields=["input_meta"])
+    meta = job.input_meta or {}
+    meta["preflight"] = {**report.as_dict(), "mode": mode, "aliases_applied": aliases}
+    job.input_meta = meta
+    job.save(update_fields=["input_meta"])
+
+    if report.blocking and mode != "permissive":
+        raise PreflightBlocked(report)
+    if report.blocking:
+        logger.warning(
+            "preflight.permissive_override",
+            extra={**_log_extra(job), "dropped_rows": report.dropped_row_count},
+        )
+    return report
+
+
+def _load_exclusion(job: Module1Job):
+    """Rebuild the job's large-claim exclusion from `input_meta`, or None.
+
+    Read from the job, never recomputed: a re-run must apply the exact claims the actuary
+    excluded, not whatever happens to be largest today.
+    """
+    from module1_engine.large_claims import DEFAULT_MODE, ExclusionPlan
+
+    block = (job.input_meta or {}).get("large_claims") or {}
+    claims = block.get("claim_numbers")
+    if not claims:
+        return None
+    return ExclusionPlan.build(claims, block.get("mode") or DEFAULT_MODE)
+
+
+def _load_upr_policy(job: Module1Job):
+    """Rebuild the job's UPR policy from the snapshot in `input_meta`, or None.
+
+    Read from the job, never live from the org: a re-run months later must apply the
+    methodology this job actually used. `None` means the engine's shipped default, which
+    is proven bit-identical to the historic hard-coded behaviour.
+    """
+    from module1_engine.upr_methods import UprPolicy
+
+    snapshot = (job.input_meta or {}).get("upr_policy") or {}
+    rules = snapshot.get("rules")
+    if not rules:
+        return None
+    return UprPolicy.from_dicts(rules)
+
+
+def _load_pattern_override(job: Module1Job, *, inherit_from: Module1Job | None = None):
+    """Build the job's PatternOverride from its payment-pattern snapshot, or None.
+
+    Read from the SNAPSHOT, not the live dataset, so a re-run months later applies the
+    exact pattern the job originally consumed. Long-form rows go straight into the
+    override — no xlsx round-trip, because the engine consumes a pattern as numbers
+    rather than as a workbook.
+
+    ``inherit_from`` lets a downstream job pick up the pattern its source used when it
+    did not supply one itself. This matters for the movement disclosure: it re-runs the
+    whole pipeline from Combined_Summary, so without inheriting the pattern it would
+    publish a disclosure that silently disagrees with the process output it is based on.
+    Mirrors the Previous Period / Expense CF inheritance in ``_read_or_inherit_input``.
+    """
+    meta = job.input_meta or {}
+    snap_ids = (meta.get("dataset_snapshots") or {}).get("payment_pattern")
+    if not snap_ids and inherit_from is not None:
+        source_meta = inherit_from.input_meta or {}
+        snap_ids = (source_meta.get("dataset_snapshots") or {}).get("payment_pattern")
+        if snap_ids:
+            meta = source_meta
+    if not snap_ids:
+        return None
+    from module2_engine.pattern_override import MODE_SHAPE_ONLY, PatternOverride
+
+    snaps = DatasetSnapshot.objects.filter(id__in=snap_ids, organization=job.organization)
+    rows: list[dict] = []
+    for snap in snaps:
+        rows.extend(snap.rows_payload or [])
+    if not rows:
+        return None
+    return PatternOverride.from_rows(rows, mode=meta.get("pattern_mode") or MODE_SHAPE_ONLY)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,6 +310,14 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_module2_error(exc: Exception) -> str:
+    from module2_engine.pattern_override import PatternValidationError
+
+    # A rejected pattern is a user-input fault with per-class detail; the generic
+    # workbook message would send the actuary to debug entirely the wrong thing.
+    if isinstance(exc, PatternValidationError):
+        detail = "; ".join(f"{k}: {v}" for k, v in sorted(exc.errors.items()))
+        return f"{exc}{(' ' + detail) if detail else ''}"
+
     msg = str(exc).strip() or "Module 2 processing failed."
     if "Required sheet" in msg or "missing required columns" in msg:
         return msg
@@ -325,6 +490,16 @@ def run_module1_summary_task(self, job_id: str) -> None:
         # engine's staging folder. File-driven kinds are already populated.
         _materialize_job_snapshots(job)
 
+        # WP0 gate. Runs AFTER staging so it sees exactly the files the engine will read, and
+        # BEFORE the engine so a doomed run costs seconds rather than minutes.
+        from tenants.models import alias_map_for
+
+        aliases = (job.input_meta or {}).get("class_aliases")
+        if aliases is None:
+            aliases = alias_map_for(job.organization)
+        _run_preflight(job, aliases or {})
+
+        run_report: dict = {}
         run_generate_summary(
             meta["exp_start"],
             meta["exp_end"],
@@ -334,7 +509,23 @@ def run_module1_summary_task(self, job_id: str) -> None:
             str(job_input_subdir(job, "claims_paid")),
             str(job_input_subdir(job, "claims_os")),
             str(out_dir),
+            upr_policy=_load_upr_policy(job),
+            exclusion=_load_exclusion(job),
+            run_report=run_report,
+            class_aliases=aliases or None,
         )
+        # An exclusion that matched no claim produces output identical to no exclusion.
+        # Record what actually matched so the UI can say so instead of the user assuming
+        # their selection took effect.
+        match = run_report.get("large_claims_match")
+        if match:
+            job.refresh_from_db(fields=["input_meta"])
+            meta_now = job.input_meta or {}
+            block = meta_now.get("large_claims")
+            if isinstance(block, dict):
+                block["match"] = match
+                job.input_meta = meta_now
+                job.save(update_fields=["input_meta"])
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")
             _finalize_success(job, out_dir, zip_path)
@@ -363,6 +554,7 @@ def run_module1_policy_upr_task(self, job_id: str) -> None:
             meta["eop"],
             str(job_input_subdir(job, "premium")),
             str(out_dir),
+            upr_policy=_load_upr_policy(job),
         )
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")
@@ -492,12 +684,18 @@ def run_module2_allocate_task(self, job_id: str) -> None:
     fallback = job_root(job) / "in" / "module2" / "combined" / "Combined_Summary.xlsx"
     try:
         combined_bytes = _resolve_combined_summary_bytes(job, fallback_path=fallback)
-        result = run_module2_allocate(combined_bytes)
+        _materialize_job_snapshots(job)
+        pattern_override = _load_pattern_override(job)
+        result = run_module2_allocate(combined_bytes, pattern_override=pattern_override)
         (out_dir / "Module2_Allocate_Output.xlsx").write_bytes(result["workbook_bytes"])
         (out_dir / "Combined_Summary.xlsx").write_bytes(combined_bytes)
 
         meta = job.input_meta or {}
         meta["ulr_rows"] = result["ulr_rows"]
+        # An override that matched nothing is a failure mode worth surfacing, so the
+        # report is persisted on success as well as on the unhappy paths.
+        if result.get("override_report") is not None:
+            meta["override_report"] = result["override_report"]
         job.input_meta = meta
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -577,6 +775,7 @@ def run_module2_process_task(self, job_id: str) -> None:
             expense_bytes,
             accounting_period,
             selected_ulr,
+            pattern_override=_load_pattern_override(job),
         )
         (out_dir / "Module2_Final_Output.xlsx").write_bytes(final_bytes)
 
@@ -658,6 +857,7 @@ def run_module2_movement_task(self, job_id: str) -> None:
             reporting_date=reporting_date,
             classes=scope.get("reserving_classes") or None,
             uwys=scope.get("uwys") or None,
+            pattern_override=_load_pattern_override(job, inherit_from=process_job),
         )
         (out_dir / "IFRS17_Movement_Analysis.xlsx").write_bytes(xlsx)
         # Machine-readable companion (structured per-grain lines) for API/downstream.

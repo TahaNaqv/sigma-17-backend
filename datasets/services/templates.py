@@ -70,6 +70,12 @@ COLUMN_META: dict[str, ColumnSpec] = {
     "premium_amount": ColumnSpec("decimal", "Total premium amount"),
     "commission_amount": ColumnSpec("decimal", "Commission amount paid"),
     # claims paid
+    "claim_number": ColumnSpec(
+        "text",
+        "Unique claim identifier. Required to rank large claims or exclude them from "
+        "development — without it those features are unavailable for this dataset.",
+    ),
+    "reported_date": ColumnSpec("date", "Date the claim was reported"),
     "amount_paid": ColumnSpec("decimal", "Amount paid on the claim"),
     "amount_recovered": ColumnSpec("decimal", "Amount recovered on the claim"),
     "loss_date": ColumnSpec("date", "Date of the loss event"),
@@ -135,6 +141,7 @@ class TemplateDef:
     title: str
     kinds: tuple[str, ...] = ()  # dataset kinds, one sheet each (sheet name via KIND_RECIPE)
     reserve: bool = False  # special triangle-skeleton builder instead of `kinds`
+    pattern: bool = False  # wide payment-pattern skeleton (dynamic period columns)
 
 
 _K = Dataset.Kind
@@ -159,6 +166,11 @@ TEMPLATES: dict[str, TemplateDef] = {
     ),
     # Reserve triangle skeleton for the Update Reserve upload.
     "reserve": TemplateDef("reserve_template.xlsx", "Reserve Triangles", reserve=True),
+    # Payment pattern — WIDE (one column per development period), unlike every other
+    # kind, because that is how an actuary reads a pattern. Unpivoted on import.
+    _K.PAYMENT_PATTERN: TemplateDef(
+        "payment_pattern_template.xlsx", "Payment Pattern", pattern=True
+    ),
 }
 
 
@@ -265,6 +277,26 @@ def _build_instructions_sheet(ws, tpl: TemplateDef) -> None:
     for i, line in enumerate(intro, start=3):
         ws.cell(row=i, column=1, value=line)
 
+    if tpl.pattern:
+        ws.cell(
+            row=11, column=1,
+            value="Payment Pattern: one row per reserving class; column headers are "
+            "development periods FROM INCEPTION (0 = the period the claim is incurred).",
+        ).font = Font(bold=True)
+        for i, line in enumerate(
+            [
+                "Weights should sum to 1 across each row.",
+                "Shape-only mode renormalises a row that does not (so 20/30/30/20 works);",
+                "strict mode rejects the run instead.",
+                "Blank means 'not supplied' — different from a supplied zero.",
+                "Negative weights are allowed (recoveries) but are flagged for review.",
+            ],
+            start=13,
+        ):
+            ws.cell(row=i, column=1, value=line)
+        ws.column_dimensions["A"].width = 96
+        return
+
     if tpl.reserve:
         ws.cell(
             row=11, column=1,
@@ -302,6 +334,50 @@ def _build_instructions_sheet(ws, tpl: TemplateDef) -> None:
         ws.column_dimensions[letter].width = width
 
 
+#: Development periods pre-formatted in the pattern template. Generous enough for the
+#: reference book's 26-quarter horizon; extra columns are left blank and the importer
+#: skips them (blank means "not supplied", not "zero").
+PATTERN_TEMPLATE_PERIODS = 40
+
+
+def _build_pattern_sheet(ws) -> None:
+    """Wide payment-pattern skeleton: RESERVINGCLASS + one column per period.
+
+    Deliberately different in shape from every other template because a pattern is read
+    as a curve across periods, not as a list of records.
+    """
+    from .wide_pattern import CLASS_HEADER
+
+    cell = ws.cell(row=1, column=1, value=CLASS_HEADER)
+    cell.font = _HEADER_FONT
+    cell.fill = _REQUIRED_FILL
+    cell.border = _HEADER_BORDER
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.column_dimensions["A"].width = 34
+
+    for i in range(PATTERN_TEMPLATE_PERIODS):
+        col = 2 + i
+        c = ws.cell(row=1, column=col, value=i)
+        c.font = _HEADER_FONT
+        c.fill = _HEADER_FILL
+        c.border = _HEADER_BORDER
+        c.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col)].width = 9
+        for row in range(2, TEMPLATE_DATA_ROWS + 2):
+            ws.cell(row=row, column=col).number_format = "0.000000"
+
+    ws.cell(row=1, column=1).comment = Comment(
+        "One row per reserving class. Column headers are development periods FROM "
+        "INCEPTION: 0 is the period the claim is incurred.\n\n"
+        "Weights should sum to 1 across each row. If they do not, shape-only mode "
+        "renormalises them (so 20/30/30/20 works); strict mode rejects the run.\n\n"
+        "Leave a cell blank if you are not supplying that period — blank means "
+        "'not supplied', which is different from a supplied zero.",
+        "Sigma 17",
+    )
+    ws.freeze_panes = "B2"
+
+
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
@@ -316,7 +392,9 @@ def render_template(key: str) -> bytes:
     wb = Workbook()
     default = wb.active  # unnamed default sheet; removed once real sheets exist
 
-    if tpl.reserve:
+    if tpl.pattern:
+        _build_pattern_sheet(wb.create_sheet("Payment Pattern"))
+    elif tpl.reserve:
         for sheet_name in ("Paid Claims Triangle", "Reported Triangle"):
             _build_reserve_sheet(wb.create_sheet(sheet_name))
     else:
