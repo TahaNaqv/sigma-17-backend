@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from datetime import datetime, timedelta
@@ -2701,6 +2702,13 @@ class Module1TrianglesView(APIView):
                 {"detail": "This job's claims data is no longer available."}
             )
 
+        available_classes = sorted(
+            {str(v) for v in paid["RESERVINGCLASS"].dropna().unique()}
+        ) if "RESERVINGCLASS" in paid.columns else []
+        available_treaties = sorted(
+            {str(v).upper() for v in paid["RI_TREATY_TYPE"].dropna().unique()}
+        ) if "RI_TREATY_TYPE" in paid.columns else []
+
         rc = (request.query_params.get("reserving_class") or "").strip()
         treaty = (request.query_params.get("treaty") or "").strip().upper()
         if rc:
@@ -2720,6 +2728,12 @@ class Module1TrianglesView(APIView):
             "reserving_class": rc or None,
             "treaty": treaty or None,
             "triangle": triangle.to_dict(),
+            # The filter vocabulary, taken from the UNFILTERED frame so selecting a class
+            # never empties the list that produced it. Served here so the page populates its
+            # pickers from the same response, rather than a second round trip that could
+            # disagree with what the triangle was built from.
+            "reserving_classes": available_classes,
+            "treaties": available_treaties,
         }
 
         if request.query_params.get("imply_cdf") in ("1", "true", "yes"):
@@ -2741,6 +2755,41 @@ class Module1TrianglesView(APIView):
             payload["implied"] = implied.to_dict()
 
         return Response(payload)
+
+
+def _frame_from_input_archive(job: Module1Job, prefix: str, amount_column: str, *, is_os: bool):
+    """Read a claims kind out of the job's durable input archive.
+
+    The third and most durable of the three sources a finished job's claims can come from.
+    Members are extracted to a temporary folder and handed to the engine's own `import_data`,
+    so the frame is built by exactly the code the run used — a second reader here would be a
+    second set of column and recovery-substitution rules to keep in step.
+    """
+    import tempfile
+    import zipfile
+    from pathlib import Path as _Path
+
+    from module1_engine.engine import import_data
+
+    if not job.input_archive:
+        return None
+    try:
+        with job.input_archive.open("rb") as fh:
+            payload = fh.read()
+    except (OSError, ValueError):
+        return None
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(payload))
+    except zipfile.BadZipFile:
+        return None
+    names = [n for n in archive.namelist() if n.startswith(prefix) and n.endswith(".xlsx")]
+    if not names:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in names:
+            target = _Path(tmp) / _Path(name).name
+            target.write_bytes(archive.read(name))
+        return import_data(tmp, amount_column, is_os=is_os)
 
 
 def _triangle_source_frame(job: Module1Job):
@@ -2772,6 +2821,16 @@ def _triangle_source_frame(job: Module1Job):
                 df["Amount"] = pd.to_numeric(df["AMOUNTPAID"], errors="coerce")
             return df
 
+    from processing.tasks import INPUT_ARCHIVE_CLAIMS_PAID_PREFIX
+
+    archived = _frame_from_input_archive(
+        job, INPUT_ARCHIVE_CLAIMS_PAID_PREFIX, "AMOUNTPAID", is_os=False
+    )
+    if archived is not None:
+        return archived
+
+    # Staged uploads, which exist only until the task's `finally` removes them. Kept last so
+    # a run still being processed can be read, but never relied upon after success.
     folder = job_input_subdir(job, "claims_paid")
     if folder.is_dir() and any(folder.glob("*.xlsx")):
         return import_data(str(folder), "AMOUNTPAID", is_os=False)
@@ -2988,6 +3047,14 @@ def _os_source_frame(job: Module1Job):
             if "Amount" not in df.columns and "AMOUNTOUTSTANDING" in df.columns:
                 df["Amount"] = pd.to_numeric(df["AMOUNTOUTSTANDING"], errors="coerce")
             return df
+
+    from processing.tasks import INPUT_ARCHIVE_CLAIMS_OS_PREFIX
+
+    archived = _frame_from_input_archive(
+        job, INPUT_ARCHIVE_CLAIMS_OS_PREFIX, "AMOUNTOUTSTANDING", is_os=True
+    )
+    if archived is not None:
+        return archived
 
     folder = job_input_subdir(job, "claims_os")
     if folder.is_dir() and any(folder.glob("*.xlsx")):

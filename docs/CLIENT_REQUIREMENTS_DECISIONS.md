@@ -425,7 +425,8 @@ make confident judgements against wrong numbers.
 | **WP3b** | Cash-flow view + override reach ("lite") | 3 | `CASHFLOW_OVERRIDE_PLAN.md` §10 | **descoped 15.5d → ~3d** |
 | **WP4** | Sensitivity / scenario runner | 1 | `SENSITIVITY_TESTING_PLAN.md` | **independent — verified 2026-08-21** |
 | **WP5** | Large-claims summary + exclusion | 6 | `LARGE_CLAIMS_EXCLUSION_PLAN.md` §10 | **implemented 2026-09-01** |
-| **WP6** | Triangle granularity (diagnostic) + `PeriodGrain` | 5 | `TRIANGLE_GRANULARITY_PLAN.md` | **implemented 2026-08-21** |
+| **WP6** | Triangle granularity (diagnostic) + `PeriodGrain` | 5 | `TRIANGLE_GRANULARITY_PLAN.md` | engine + API only — **no UI** |
+| **WP8** | The Triangle View — requirement 5's missing surface | 5 | `TRIANGLE_VIEW_PLAN.md` §11 | **implemented 2026-09-08** |
 | **WP7** | Visual system + palette accessibility | 8 | `UI_VISUAL_SYSTEM_PLAN.md` §10 | **implemented 2026-09-01** |
 
 WP1 and WP5 share the triangle grid component. **WP5 shipped first and built it**
@@ -443,6 +444,18 @@ the first feature built after it, ahead of WP3a.
 The earlier "after WP2, WP3" ordering assumed its scenario payload had to carry their parameters; it
 does not. WP4 shocks only RA, the CY discount curve and Selected ULR — none of which WP2 or WP3
 touch. It can therefore be delivered first, after WP0.
+
+**Requirement 5 was not reachable in the product (found 2026-09-08, fixed the same day by WP8).** WP6 shipped the grain
+engine, the credibility scoring and the API, all tested — but nothing renders them: no route, no
+page, and `TriangleCredibility` / `TriangleGrid` are mounted nowhere. WP8 (`TRIANGLE_VIEW_PLAN.md`)
+adds the surface, on a dedicated `/triangles` page in the IBNR Workflow group.
+
+**And the endpoint behind it does not work for upload-driven jobs.** `run_module1_summary_task`
+deletes the staged inputs in its `finally`, so `_triangle_source_frame` finds nothing once a run
+completes — measured at 6,580 rows before cleanup and `None` after. **Requirement 6's large-claims
+endpoint shares the same source frame and the same defect.** Both feature suites miss it because
+they stage files and never run the task. WP8 fixes it by persisting the claims inputs into the
+existing `input_archive`, which repairs requirement 6 at the same time.
 
 Requirement 9 is the client's own acceptance run; our obligation is that the golden net is green and
 that each WP ships with the regression coverage listed in its plan.

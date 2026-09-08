@@ -153,3 +153,61 @@ class TrianglesApiTests(TestCase):
         resp = self.client.get(f"/api/module1/jobs/{job.id}/triangles/")
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Reserve Summary", str(resp.data))
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class TriangleFilterVocabularyTests(TestCase):
+    """The page populates its class and treaty pickers from the triangle response itself.
+
+    Served from the UNFILTERED frame on purpose: if the lists were derived after filtering,
+    choosing a class would empty the list that offered it and the user could not get back.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="TFV", slug="tfv")
+        self.user = User.objects.create_user("tfv", "tfv@example.com", "pw")
+        _give_role(self.user, "ActuaryTFV", ["module1.run"], self.org)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.job = self._job()
+
+    def _job(self):
+        from processing.utils import init_job_work_dir, job_input_subdir
+
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.SUMMARY,
+            status=Module1Job.Status.SUCCESS,
+            input_meta={"exp_start": "01-01-2016", "exp_end": "31-12-2017"},
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        init_job_work_dir(job)
+        dest = job_input_subdir(job, "claims_paid")
+        for f in CLAIMS_DIR.glob("*.xlsx"):
+            shutil.copy(f, dest / f.name)
+        return job
+
+    def _get(self, **params):
+        from urllib.parse import urlencode
+
+        return self.client.get(
+            f"/api/module1/jobs/{self.job.id}/triangles/?{urlencode(params)}"
+        )
+
+    def test_the_response_carries_the_classes_present_in_the_data(self):
+        body = self._get(grain="quarterly").json()
+        self.assertIn("Motor Insurance", body["reserving_classes"])
+        self.assertIn("GROSS", body["treaties"])
+
+    def test_filtering_does_not_shrink_the_vocabulary(self):
+        unfiltered = self._get(grain="quarterly").json()["reserving_classes"]
+        filtered = self._get(
+            grain="quarterly", reserving_class="Motor Insurance"
+        ).json()["reserving_classes"]
+        self.assertEqual(unfiltered, filtered)

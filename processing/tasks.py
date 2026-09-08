@@ -419,6 +419,40 @@ def _resolve_combined_summary_bytes(job: Module1Job, *, fallback_path: Path | No
 INPUT_ARCHIVE_PREVIOUS = "Previous_Period.xlsx"
 INPUT_ARCHIVE_EXPENSE = "Expense_CF.xlsx"
 
+# Module 1 summary jobs archive their CLAIMS inputs under these prefixes, one member per
+# staged workbook. Folders rather than single members, because a run may stage several files
+# per kind.
+INPUT_ARCHIVE_CLAIMS_PAID_PREFIX = "claims_paid/"
+INPUT_ARCHIVE_CLAIMS_OS_PREFIX = "claims_os/"
+
+
+def _persist_summary_claims(job: Module1Job) -> None:
+    """Archive a summary job's claims inputs before the work directory is destroyed.
+
+    `run_module1_summary_task` ends with `_cleanup_root`, which removes the staged uploads.
+    Everything that reads a finished job's claims afterwards — the triangle view (req 5) and
+    large-claim ranking (req 6) — then finds nothing: measured at 6,580 rows before cleanup
+    and `None` after. Dataset-driven runs were unaffected because their rows are snapshotted;
+    upload-driven runs, which are the primary path, lost their claims entirely.
+
+    Only the claims kinds are archived. Premium is not read back by any diagnostic, and
+    archiving it would double the stored bytes for no consumer.
+    """
+    members: dict[str, bytes] = {}
+    for kind, prefix in (
+        ("claims_paid", INPUT_ARCHIVE_CLAIMS_PAID_PREFIX),
+        ("claims_os", INPUT_ARCHIVE_CLAIMS_OS_PREFIX),
+    ):
+        folder = job_input_subdir(job, kind)
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.xlsx")):
+            if path.name.startswith("~$"):
+                continue
+            members[f"{prefix}{path.name}"] = path.read_bytes()
+    if members:
+        _persist_input_archive(job, members)
+
 
 def _persist_input_archive(job: Module1Job, members: dict[str, bytes]) -> None:
     """Persist the canonical input workbooks a module2 job consumed into the
@@ -529,6 +563,10 @@ def run_module1_summary_task(self, job_id: str) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")
             _finalize_success(job, out_dir, zip_path)
+        # Before `_cleanup_root` destroys the staging folder. Without this the job's own
+        # claims are unreadable the moment it succeeds, and every diagnostic built on them
+        # reports "no longer available".
+        _persist_summary_claims(job)
         logger.info("summary.success", extra=_log_extra(job))
     except Exception as exc:
         logger.exception("summary.failed", extra=_log_extra(job))
