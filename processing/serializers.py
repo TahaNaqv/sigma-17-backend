@@ -98,11 +98,27 @@ class SourceCandidateSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     output_artifacts = serializers.ListField(child=serializers.CharField())
     label = serializers.SerializerMethodField()
+    # Sheets the requesting consumer needs that this job's artifact lacks.
+    # Always [] when the caller named no consumer, so existing clients that
+    # ignore the field see exactly what they saw before.
+    missing_sheets = serializers.SerializerMethodField()
+    eligible = serializers.SerializerMethodField()
 
     def get_label(self, obj):
         # obj is a Module1Job instance here
         when = obj.completed_at or obj.created_at
         return f"{obj.get_job_type_display()} — {when.strftime('%Y-%m-%d %H:%M')}"
+
+    def _missing(self, obj) -> list[str]:
+        # Computed once per row by the view and passed in, so serializing a page
+        # never re-reads a ZIP per field.
+        return (self.context.get("missing_by_id") or {}).get(obj.id, [])
+
+    def get_missing_sheets(self, obj):
+        return self._missing(obj)
+
+    def get_eligible(self, obj):
+        return not self._missing(obj)
 
 
 class OutputFileItemSerializer(serializers.Serializer):

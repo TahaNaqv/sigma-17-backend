@@ -18,6 +18,29 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from module2_engine.scenarios import ScenarioShock
 
 
+# Every sheet `_compute_allocate_frames` reads out of Combined_Summary.xlsx, in
+# the order it reads them. This is the ONE definition of "a workbook Module 2
+# can allocate from": the chaining layer filters source jobs on it, so a job
+# whose Combined_Summary is missing any of these is never offered as a source.
+# Keeping it beside the reads (and pinned by test_allocate_required_sheets.py)
+# is what stops the picker's notion of readiness from drifting from the
+# engine's actual requirement.
+#
+# Module 1 produces every sheet here EXCEPT `ULAE-RA` and `Discount Rate`,
+# which are actuary judgement and are added to the workbook by hand — which is
+# why a raw Module 1 output can never be allocated from directly.
+ALLOCATE_REQUIRED_SHEETS: tuple[str, ...] = (
+    "IBNR Summary",
+    "Allocation EP",
+    "LIC (OS) Summary",
+    "ULAE-RA",
+    "Discount Rate",
+    "UPR Run-Off",
+    "UW Summary",
+    "Combined Summary",
+)
+
+
 def _read_required_sheet(path_or_bytes: str | bytes | io.BytesIO, sheet_name: str, **kwargs) -> pd.DataFrame:
     try:
         return _read_excel_any(path_or_bytes, sheet_name, **kwargs)

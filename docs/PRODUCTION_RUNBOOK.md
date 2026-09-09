@@ -117,6 +117,28 @@ Record each restore drill result with timestamp and operator.
   rows. The command is idempotent, supports `--dry-run`, `--only-empty`,
   and `--batch-size`.
 
+**One-shot backfill after the sheet-index migration**
+- After applying `processing.0008_module1job_output_sheets`, run:
+  ```bash
+  python manage.py backfill_output_sheets
+  ```
+  This stamps `output_sheets` — which sheets each chainable workbook actually
+  contains — so the source picker can hide jobs a consumer could not read. A
+  Module 1 `Combined_Summary.xlsx` never carries `ULAE-RA` / `Discount Rate`
+  (actuary judgement, added by hand), so before this every Module 1 job was
+  offered as a Cash Flow Allocation source and failed minutes into the run.
+
+  **Running it is optional, not a release gate.** A job with no sheet index is
+  treated as UNKNOWN and stays listed, exactly as before, and the candidate
+  list indexes rows lazily as they are paged through — so the picker converges
+  on its own. The command just does the whole backlog at once. Idempotent;
+  supports `--dry-run`, `--all`, and `--batch-size`.
+
+- To check progress:
+  ```bash
+  python manage.py backfill_output_sheets --dry-run
+  ```
+
 **Forensics for chained jobs**
 - The job detail page in the dashboard shows a lineage badge ("From: Summary
   #3f9a · ...") linking to the source job.

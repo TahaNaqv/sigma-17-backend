@@ -36,6 +36,8 @@ from processing.services.source_resolver import (
     read_artifact_bytes,
     read_input_archive_bytes,
     stamp_output_artifacts,
+    sheet_index_from_zip_path,
+    stamp_output_sheets,
     stamp_retention,
 )
 from datasets.models import Dataset, DatasetSnapshot
@@ -368,6 +370,7 @@ def _finalize_success(job: Module1Job, out_dir: Path, zip_path: Path) -> None:
     with open(zip_path, "rb") as f:
         job.output_zip.save(f"{job.id}.zip", File(f), save=False)
     stamp_output_artifacts(job, list_artifacts_in_zip_path(zip_path))
+    stamp_output_sheets(job, sheet_index_from_zip_path(zip_path))
     job.status = Module1Job.Status.SUCCESS
     job.completed_at = timezone.now()
     job.error_message = ""
@@ -378,6 +381,7 @@ def _finalize_success(job: Module1Job, out_dir: Path, zip_path: Path) -> None:
         "error_message",
         "output_zip",
         "output_artifacts",
+        "output_sheets",
         "retention_until",
     ])
 
@@ -747,6 +751,7 @@ def run_module2_allocate_task(self, job_id: str) -> None:
             with open(zip_path, "rb") as f:
                 job.output_zip.save(f"{job.id}.zip", File(f), save=False)
             stamp_output_artifacts(job, list_artifacts_in_zip_path(zip_path))
+            stamp_output_sheets(job, sheet_index_from_zip_path(zip_path))
             job.status = Module1Job.Status.SUCCESS
             job.completed_at = timezone.now()
             job.error_message = ""
@@ -757,6 +762,7 @@ def run_module2_allocate_task(self, job_id: str) -> None:
                 "error_message",
                 "output_zip",
                 "output_artifacts",
+                "output_sheets",
                 "retention_until",
                 "input_meta",
             ])

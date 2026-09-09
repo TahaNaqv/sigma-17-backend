@@ -83,6 +83,20 @@ class Module1Job(models.Model):
     # cracking open the ZIP per request.
     output_artifacts = models.JSONField(default=list, blank=True)
 
+    # Denormalized {artifact_basename: [sheet names]} for the chainable workbook
+    # artifacts only (never every .xlsx in the ZIP — a summary run emits dozens).
+    # `output_artifacts` answers "is the file there"; this answers "could a
+    # downstream engine actually read it", which is a different question: a
+    # Module 1 Combined_Summary always exists but never carries the ULAE-RA /
+    # Discount Rate sheets Module 2 needs.
+    #
+    # An ABSENT key means "not indexed yet" (a job that predates this field, or
+    # an unreadable archive), NOT "no sheets" — every consumer treats absent as
+    # unknown and keeps offering the job, so rolling this out can never make an
+    # existing source disappear. `backfill_output_sheets` fills them in bulk and
+    # the candidate list fills them lazily as pages are viewed.
+    output_sheets = models.JSONField(default=dict, blank=True)
+
     # Retention policy fields. retention_until is stamped on success based on
     # the organization's default_output_retention_days; null = retain forever.
     # legal_hold is an admin opt-in regulatory override that skips the sweeper.

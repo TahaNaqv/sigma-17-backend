@@ -53,6 +53,8 @@ from .services.source_resolver import (
     ARTIFACT_COMBINED_SUMMARY,
     ARTIFACT_MODULE2_FINAL,
     ARTIFACT_PRODUCERS,
+    annotate_missing_sheets,
+    required_sheets_for_consumer,
     list_candidate_sources,
     read_artifact_bytes,
     resolve_source_job,
@@ -280,17 +282,34 @@ def _save_xlsx_list(dest, files):
 # ---------------------------------------------------------------------------
 
 
+def _raw_source_id(request, field_name: str = "source_job_id"):
+    """The source id as the client sent it, or None. No validation.
+
+    Lets an endpoint settle request-SHAPE questions (file XOR source) before
+    resolving, so a malformed request is rejected on its shape rather than on
+    whatever the source's content turns out to be — and without spending a ZIP
+    read on a request that was never going to run.
+    """
+    return request.POST.get(field_name) or request.data.get(field_name) or None
+
+
 def _read_combined_summary_source(
     request,
     *,
     field_name: str = "source_job_id",
+    consumer: str | None = None,
 ):
     """Resolve the chained Combined_Summary source from request body, or None.
 
     Returns the resolved Module1Job or None if the caller did not supply
     `source_job_id`. Raises ValidationError on any malformed/invalid id.
+
+    `consumer` additionally asserts the source workbook carries the sheets that
+    consumer's engine reads. Only the Module 2 entry points pass it — the Module 1
+    consumers here (Summary appending to an existing book, Update Reserves, UW
+    Parameters) legitimately accept a partial Combined_Summary.
     """
-    raw = request.POST.get(field_name) or request.data.get(field_name)
+    raw = _raw_source_id(request, field_name)
     if not raw:
         return None
     return resolve_source_job(
@@ -298,6 +317,7 @@ def _read_combined_summary_source(
         source_job_id=raw,
         artifact=ARTIFACT_COMBINED_SUMMARY,
         field_name=field_name,
+        consumer=consumer,
     )
 
 
@@ -1552,11 +1572,16 @@ class Module2AllocateJobView(APIView):
 
     def post(self, request):
         combined = request.FILES.get("combined_summary")
-        source = _read_combined_summary_source(request)
+        # Shape before content: "you sent both" is a clearer complaint than
+        # anything about the source workbook, and settling it first keeps the
+        # sheet check off a request that is being rejected anyway.
         _require_exactly_one(
-            combined, source,
+            combined, _raw_source_id(request),
             file_name="combined_summary",
             source_name="source_job_id",
+        )
+        source = _read_combined_summary_source(
+            request, consumer=Module1Job.JobType.MODULE2_ALLOCATE
         )
 
         if combined:
@@ -2021,6 +2046,12 @@ class SourceCandidatesView(APIView):
                 {"job_type": f"Not a producer of {artifact}."}
             )
 
+        # Which job type is going to CONSUME the artifact. Optional and
+        # unvalidated against a whitelist on purpose: an unknown consumer simply
+        # declares no sheet requirement, so an older or newer client that sends
+        # something unexpected degrades to the unfiltered list rather than a 400.
+        consumer = request.query_params.get("consumer") or None
+
         try:
             page = int(request.query_params.get("page", "1"))
             page_size = int(request.query_params.get("page_size", "20"))
@@ -2031,16 +2062,26 @@ class SourceCandidatesView(APIView):
             request=request,
             artifact=artifact,
             job_type=job_type,
+            consumer=consumer,
             page=page,
             page_size=page_size,
         )
         items = list(qs)
-        data = SourceCandidateSerializer(items, many=True).data
+        # Annotate this page only. The SQL filter already dropped rows KNOWN to
+        # be unusable; this catches the ones not yet indexed (and indexes them as
+        # a side effect), so a stale row is shown once with its reason and is
+        # gone from the next query rather than failing a run.
+        missing_by_id = annotate_missing_sheets(items, artifact, consumer)
+        data = SourceCandidateSerializer(
+            items, many=True, context={"missing_by_id": missing_by_id}
+        ).data
         return Response({
             "count": total,
             "page": page,
             "page_size": page_size,
             "artifact": artifact,
+            "consumer": consumer,
+            "required_sheets": list(required_sheets_for_consumer(consumer)),
             "results": data,
         })
 
@@ -2079,11 +2120,16 @@ class Module2SensitivityJobView(APIView):
         from tenants.models import ScenarioSet
 
         combined = request.FILES.get("combined_summary")
-        source = _read_combined_summary_source(request)
+        # Shape before content: "you sent both" is a clearer complaint than
+        # anything about the source workbook, and settling it first keeps the
+        # sheet check off a request that is being rejected anyway.
         _require_exactly_one(
-            combined, source,
+            combined, _raw_source_id(request),
             file_name="combined_summary",
             source_name="source_job_id",
+        )
+        source = _read_combined_summary_source(
+            request, consumer=Module1Job.JobType.MODULE2_SENSITIVITY
         )
 
         scope = (request.POST.get("scope") or SCOPE_ALLOCATE).strip()

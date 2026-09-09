@@ -21,6 +21,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Permission, Role
 from processing.models import Module1Job
+from module2_engine.engine import ALLOCATE_REQUIRED_SHEETS
 from processing.services.source_resolver import ARTIFACT_COMBINED_SUMMARY
 from tenants.models import Membership, Organization
 
@@ -39,6 +40,24 @@ def _xlsx_bytes(sheet_name: str = "Sheet1") -> bytes:
     ws.title = sheet_name
     ws.append(["a", "b"])
     ws.append([1, 2])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _combined_summary_bytes() -> bytes:
+    """A Combined_Summary carrying every sheet the allocate engine reads.
+
+    Chaining into Module 2 now checks sheet-level fitness, not just that a file
+    called Combined_Summary.xlsx exists, so a single-sheet stub would be rejected
+    at submit — correctly. Building the real sheet set here keeps these tests
+    exercising the chaining paths they are about. Sheet-fitness itself is covered
+    by processing/tests/test_source_eligibility.py.
+    """
+    wb = Workbook()
+    wb.remove(wb.active)
+    for name in ALLOCATE_REQUIRED_SHEETS:
+        wb.create_sheet(title=name).append(["a", "b"])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -77,7 +96,14 @@ def _make_successful_source(
     output_purged: bool = False,
 ) -> Module1Job:
     artifacts = artifacts or [ARTIFACT_COMBINED_SUMMARY]
-    payload = {a: _xlsx_bytes(a.replace(".xlsx", "")) for a in artifacts}
+    payload = {
+        a: (
+            _combined_summary_bytes()
+            if a == ARTIFACT_COMBINED_SUMMARY
+            else _xlsx_bytes(a.replace(".xlsx", ""))
+        )
+        for a in artifacts
+    }
     job = Module1Job.objects.create(
         user=user,
         organization=org,
