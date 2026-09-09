@@ -321,6 +321,10 @@ def _normalize_module2_error(exc: Exception) -> str:
     msg = str(exc).strip() or "Module 2 processing failed."
     if "Required sheet" in msg or "missing required columns" in msg:
         return msg
+    # Names the offending head-of-damage values, which the actuary can fix in
+    # the source claims data; the generic message names nothing.
+    if "unrecognised 'Payment/Recovery' values" in msg:
+        return msg
     if "Source job" in msg or "Referenced source job" in msg:
         return msg
     if "Allocate output archive is missing Combined_Summary.xlsx" in msg:

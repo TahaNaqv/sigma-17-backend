@@ -33,6 +33,97 @@ def _require_columns(df: pd.DataFrame, sheet_name: str, required: list[str]) -> 
         )
 
 
+def _ibnr_summary_frames(ibnr_summary: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split "IBNR Summary" into its (names, values) halves without hardcoding
+    column positions.
+
+    Module 1 builds this sheet as `<reserve summary columns> + [RESERVINGCLASS,
+    Payment/Recovery, GROSS/RI]`, so the three metadata columns are always the
+    LAST three and everything before them is layout-dependent: the reserve block
+    gained a `CDF` column (module1_engine/engine.py — `new_headers`), and a
+    large-claim add-back run writes two extra base columns. Either shift moved
+    the metadata off the positions this reader used to hardcode ([18, 19, 20]),
+    which silently read `CDF` as the reserving class and the reserving class as
+    `Payment/Recovery` — a pivot with one column per class instead of
+    Payment/S&S, and a "Module 2 processing failed" the actuary cannot act on.
+
+    Taking the metadata from the tail and the two measures by header name is
+    correct for every one of those layouts, and resolves to exactly the historic
+    positions for the pre-CDF 21-column sheet the goldens pin.
+    """
+    if ibnr_summary.shape[1] < 4:
+        raise ValueError(
+            "Sheet 'IBNR Summary' is missing required columns: "
+            "RESERVINGCLASS, Payment/Recovery, GROSS/RI."
+        )
+    _require_columns(ibnr_summary, "IBNR Summary", ["Accident_Period", "Paid CDF", "IBNR"])
+
+    # Positional, not by name: some Module 1 builds mislabel the header row of
+    # this sheet (dropping `CDF` and repeating `GROSS/RI`) while writing the
+    # columns themselves in the documented order, so the tail positions are the
+    # only trustworthy locator. Names are re-imposed below.
+    names = ibnr_summary.iloc[:, [0, -3, -2, -1]].copy()
+    names.columns = ["Accident_Period", "RESERVINGCLASS", "Payment/Recovery", "GROSS/RI"]
+    values = ibnr_summary.loc[:, ["Paid CDF", "IBNR"]].copy()
+    return names, values
+
+
+def _ibnr_pivot(ibnr_summary: pd.DataFrame) -> pd.DataFrame:
+    """Collapse "IBNR Summary" to one row per (Accident_Period, class, GROSS/RI)
+    carrying `Payment`, `S&S` and the gross paid CDF.
+    """
+    ibnr_names, ibnr_values = _ibnr_summary_frames(ibnr_summary)
+    ibnr_names.iloc[:, 2] = ibnr_names.iloc[:, 2].replace(
+        {"Payment": "Payment", "Subrogation": "S&S", "Salvage": "S&S"}
+    )
+    ibnr_combined = pd.concat([ibnr_names, ibnr_values], axis=1)
+    ibnr_combined["IBNR"] = pd.to_numeric(ibnr_combined.iloc[:, -1], errors="coerce").fillna(0)
+    ibnr_combined["Paid CDF"] = pd.to_numeric(ibnr_combined.iloc[:, -2], errors="coerce").fillna(0)
+    ibnr_pivot = ibnr_combined.pivot_table(
+        index=["Accident_Period", "RESERVINGCLASS", "GROSS/RI"],
+        columns="Payment/Recovery",
+        values="IBNR",
+        aggfunc="sum",
+    )
+    # The pivot only grows a column for a head of damage the book actually
+    # contains, so a book with no salvage/subrogation rows yields "Payment"
+    # alone and one with an unmapped head of damage yields an extra column.
+    # Either way the fixed six-name assignment below used to raise a bare pandas
+    # length mismatch, which the task reported as the unactionable "check
+    # workbook formats" message. Pin the value columns to the canonical pair
+    # instead: absent means nil recovery, unmapped is a real input fault worth
+    # naming rather than silently dropping the IBNR it carries.
+    unexpected = [c for c in ibnr_pivot.columns if c not in ("Payment", "S&S")]
+    if unexpected:
+        raise ValueError(
+            "Sheet 'IBNR Summary' has unrecognised 'Payment/Recovery' values: "
+            f"{', '.join(map(str, sorted(unexpected)))}. Expected Payment, Salvage "
+            "or Subrogation."
+        )
+    ibnr_pivot = ibnr_pivot.reindex(columns=["Payment", "S&S"], fill_value=0).reset_index()
+    ibnr_paid_cdf = ibnr_combined[
+        (ibnr_combined["Payment/Recovery"] == "Payment")
+        & (ibnr_combined["GROSS/RI"] == "GROSS")
+    ][["Accident_Period", "RESERVINGCLASS", "Paid CDF"]].drop_duplicates(
+        subset=["Accident_Period", "RESERVINGCLASS"]
+    )
+    ibnr_pivot = pd.merge(
+        ibnr_pivot, ibnr_paid_cdf, on=["Accident_Period", "RESERVINGCLASS"], how="left"
+    )
+    ibnr_pivot.columns = [
+        "Accident_Period",
+        "RESERVINGCLASS",
+        "GROSS/RI",
+        "Payment",
+        "S&S",
+        "Paid CDF",
+    ]
+    ibnr_pivot[["Payment", "S&S"]] = ibnr_pivot[["Payment", "S&S"]].apply(
+        pd.to_numeric, errors="coerce"
+    ).fillna(0)
+    return ibnr_pivot
+
+
 def _read_excel_any(path_or_bytes: str | bytes | io.BytesIO, sheet_name: str, **kwargs) -> pd.DataFrame:
     # An already-opened ExcelFile lets callers parse the workbook once and read
     # many sheets from it, instead of re-parsing the whole file per sheet.
@@ -241,43 +332,7 @@ def _compute_allocate_frames(
         ],
     )
 
-    ibnr_values = ibnr_summary.iloc[:, [7, 16]]
-    ibnr_names = ibnr_summary.iloc[:, [0, 18, 19, 20]]
-    ibnr_names.iloc[:, 2] = ibnr_names.iloc[:, 2].replace(
-        {"Payment": "Payment", "Subrogation": "S&S", "Salvage": "S&S"}
-    )
-    ibnr_combined = pd.concat([ibnr_names, ibnr_values], axis=1)
-    ibnr_combined["IBNR"] = pd.to_numeric(ibnr_combined.iloc[:, -1], errors="coerce").fillna(0)
-    ibnr_combined["Paid CDF"] = pd.to_numeric(ibnr_combined.iloc[:, -2], errors="coerce").fillna(0)
-    ibnr_pivot = (
-        ibnr_combined.pivot_table(
-            index=["Accident_Period", "RESERVINGCLASS", "GROSS/RI"],
-            columns="Payment/Recovery",
-            values="IBNR",
-            aggfunc="sum",
-        )
-        .reset_index()
-    )
-    ibnr_paid_cdf = ibnr_combined[
-        (ibnr_combined["Payment/Recovery"] == "Payment")
-        & (ibnr_combined["GROSS/RI"] == "GROSS")
-    ][["Accident_Period", "RESERVINGCLASS", "Paid CDF"]].drop_duplicates(
-        subset=["Accident_Period", "RESERVINGCLASS"]
-    )
-    ibnr_pivot = pd.merge(
-        ibnr_pivot, ibnr_paid_cdf, on=["Accident_Period", "RESERVINGCLASS"], how="left"
-    )
-    ibnr_pivot.columns = [
-        "Accident_Period",
-        "RESERVINGCLASS",
-        "GROSS/RI",
-        "Payment",
-        "S&S",
-        "Paid CDF",
-    ]
-    ibnr_pivot[["Payment", "S&S"]] = ibnr_pivot[["Payment", "S&S"]].apply(
-        pd.to_numeric, errors="coerce"
-    ).fillna(0)
+    ibnr_pivot = _ibnr_pivot(ibnr_summary)
 
     allocation_values = allocation_ep.iloc[:, [4]]
     allocation_names = allocation_ep.iloc[:, [0, 1, 2, 3]]
