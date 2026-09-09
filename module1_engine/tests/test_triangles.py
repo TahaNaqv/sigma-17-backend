@@ -165,6 +165,47 @@ def test_credibility_is_scored_on_density_not_raw_cell_count(triangles):
     assert m.level == "medium"
 
 
+def test_credibility_ignores_payments_below_the_diagonal():
+    """Regression: a payment recorded after the valuation date lands in the lower triangle,
+    which `build_triangle` masks to NaN. Counting it in the credibility scored a triangle
+    denser and larger than the one rendered — on a 12-month window with a year of run-off it
+    reported 144 populated cells out of 78, i.e. 185% populated."""
+    rows = [
+        {"LOSSDATE": f"2024-{m:02d}-15",
+         "PAYMENTDATE": f"{2024 if p <= 12 else 2025}-{p if p <= 12 else p - 12:02d}-20",
+         "Amount": 100.0}
+        for m in range(1, 13)
+        for p in range(m, 25)
+    ]
+    t = build_triangle(
+        pd.DataFrame(rows), grain=MONTHLY, start="2024-01-01", end="2024-12-31"
+    )
+    c = t.credibility
+    assert c.non_empty_cells <= c.cells_in_upper_triangle
+    assert c.fill_ratio <= 1.0
+    # And it describes exactly what the grid shows.
+    assert c.non_empty_cells == int(t.cumulative.notna().to_numpy().sum())
+
+
+def test_sparsest_column_is_measured_against_the_cells_it_can_hold(triangles):
+    """Regression: ranking development columns on their raw count always named the far-right
+    corner, where one or two cells is the shape of a triangle rather than a fact about the
+    data — the UI badged `development 45 has only 0 observations` on a 48x48 triangle whose
+    column 45 can only ever hold 3 cells."""
+    c = triangles["monthly"].credibility
+    col = c.sparsest_dev_column
+    assert col is not None
+    assert col["observable"] == c.accident_periods - col["index"]
+    assert col["non_empty"] <= col["observable"]
+    # A fully-populated column is never named sparser than an emptier one.
+    counts = (triangles["monthly"].counts.to_numpy() > 0)
+    n = c.accident_periods
+    ratios = [
+        counts[: n - j, j].sum() / (n - j) for j in range(triangles["monthly"].counts.shape[1])
+    ]
+    assert ratios[col["index"]] == pytest.approx(min(ratios))
+
+
 def test_a_sparse_class_is_unusable_at_every_grain(paid):
     thin = paid[(paid.RESERVINGCLASS == "Banker's Blanket") & (paid.RI_TREATY_TYPE == "GROSS")]
     for grain in (MONTHLY, QUARTERLY):

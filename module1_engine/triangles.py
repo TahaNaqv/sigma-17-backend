@@ -125,17 +125,41 @@ class TriangleSet:
 def _score(counts: pd.DataFrame) -> Credibility:
     n_acc, n_dev = counts.shape
     values = counts.to_numpy()
+    # Score the triangle that is actually shown. `build_triangle` masks everything below the
+    # leading diagonal to NaN — a payment recorded after the valuation date lands there — so
+    # counting those rows here would describe a denser, higher-volume triangle than the one on
+    # screen, and can put "cells populated" above 100%.
+    if n_acc and n_dev:
+        observed = (np.arange(n_acc)[:, None] + np.arange(n_dev)[None, :]) < n_acc
+        values = np.where(observed, values, 0)
     upper = sum(1 for i in range(n_acc) for j in range(n_dev) if i + j < n_acc)
     non_empty = int((values > 0).sum())
     claims = int(values.sum())
     populated = values[values > 0]
     median = float(np.median(populated)) if populated.size else 0.0
 
+    # The sparsest development column, measured against the cells that column CAN hold —
+    # column j has only n_acc - j observable cells. Ranking on the raw count instead always
+    # named the far-right corner, where one or two cells is the shape of a triangle rather
+    # than a fact about the data, and said nothing about the columns that carry the factors.
     sparsest = None
-    if n_dev:
-        col_counts = (values > 0).sum(axis=0)
-        idx = int(np.argmin(col_counts))
-        sparsest = {"index": idx, "non_empty": int(col_counts[idx])}
+    if n_dev and n_acc:
+        col_non_empty = (values > 0).sum(axis=0)
+        best = None
+        for j in range(n_dev):
+            observable = n_acc - j
+            if observable <= 0:
+                continue
+            ratio = int(col_non_empty[j]) / observable
+            if best is None or ratio < best[0]:
+                best = (ratio, j, observable)
+        if best is not None:
+            _, idx, observable = best
+            sparsest = {
+                "index": idx,
+                "non_empty": int(col_non_empty[idx]),
+                "observable": int(observable),
+            }
 
     fill = (non_empty / upper) if upper else 0.0
     if non_empty < UNUSABLE_MAX_CELLS:
