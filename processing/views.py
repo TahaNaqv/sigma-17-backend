@@ -1058,6 +1058,23 @@ class Module1UpdateReserveJobView(APIView):
         combined = request.FILES.get("combined_summary")
         combined_source = _read_combined_summary_source(request)
 
+        # Combined_Summary from a DIFFERENT job than the one supplying the reserve
+        # workbooks.
+        #
+        # `source_job_id` has to be the Summary run, because that is the only job
+        # whose ZIP holds the reserve workbooks the override editors read. Its
+        # Combined_Summary was therefore also the only one this step could carry
+        # forward — silently discarding any UW Parameters run layered on top
+        # (Exp Ratio / RI %, ULAE-RA, Discount Rate). The actuary then had to
+        # re-add those sheets by hand before Module 2 would accept the workbook.
+        #
+        # Two upstream sources on one job follows the movement job's convention:
+        # the substantive lineage stays on the `source_job` FK, the secondary id
+        # rides in `input_meta` and is re-resolved (org-scoped) by the task.
+        cs_source = _read_combined_summary_source(
+            request, field_name="combined_summary_source_job_id"
+        )
+
         # Excel-free path: when the user provides `cdf_overrides`, the
         # reserve workbooks come from `source_job_id`'s output ZIP and
         # we apply the overrides to the Selected CDF rows before running
@@ -1154,6 +1171,13 @@ class Module1UpdateReserveJobView(APIView):
             file_name="combined_summary",
             source_name="source_job_id",
         )
+        # Only one EXPLICIT Combined_Summary override. `source_job_id`'s own copy
+        # is the fallback, not an override, so it is not part of this exclusion.
+        _require_at_most_one(
+            combined, cs_source,
+            file_name="combined_summary",
+            source_name="combined_summary_source_job_id",
+        )
 
         extra = [combined] if combined else []
         if reserve_files:
@@ -1191,6 +1215,8 @@ class Module1UpdateReserveJobView(APIView):
             }
 
         new_meta = {"files": meta_files}
+        if cs_source is not None:
+            new_meta["combined_summary_source_job_id"] = str(cs_source.id)
         if cdf_overrides is not None:
             new_meta["cdf_overrides"] = cdf_overrides
         if ldf_overrides is not None:

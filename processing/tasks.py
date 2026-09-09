@@ -653,12 +653,40 @@ def run_module1_update_reserve_task(self, job_id: str) -> None:
                 dest_folder=staging,
             )
 
-        # If chained, drop the source Combined_Summary into staging so the
-        # engine sees it the same way it would have seen an uploaded file.
-        if job.source_job_id:
+        # Drop a Combined_Summary into staging so the engine sees it the same way
+        # it would have seen an uploaded file. The engine APPENDS its refreshed
+        # IBNR Summary to whatever workbook it finds here and leaves every other
+        # sheet intact, so whichever copy lands here is the one that survives into
+        # this job's output — and therefore the one Module 2 will eventually read.
+        #
+        # Precedence, strongest first:
+        #   1. `combined_summary_source_job_id` — an explicit choice of a different
+        #      job's workbook, e.g. the UW Parameters run that added ULAE-RA /
+        #      Discount Rate on top of the Summary run supplying the reserve
+        #      workbooks. Without this the UW Parameters work was silently lost.
+        #   2. An uploaded Combined_Summary — already written here by the view.
+        #      Guarding on it matters: `source_job_id` is set in the overrides
+        #      path, so without this branch step 3 would overwrite the file the
+        #      user just uploaded.
+        #   3. `source_job_id`'s own copy — the historic behaviour, unchanged when
+        #      neither override is supplied.
+        cs_source_id = meta.get("combined_summary_source_job_id")
+        has_uploaded_cs = bool((meta.get("files") or {}).get("combined_summary"))
+        cs_bytes = None
+        if cs_source_id:
+            cs_job = Module1Job.objects.filter(
+                pk=cs_source_id, organization=job.organization
+            ).first()
+            if cs_job is None:
+                raise ValueError("Referenced Combined Summary job was not found.")
+            cs_bytes = read_artifact_bytes(
+                source_job=cs_job, artifact=ARTIFACT_COMBINED_SUMMARY
+            )
+        elif not has_uploaded_cs and job.source_job_id:
             cs_bytes = read_artifact_bytes(
                 source_job=job.source_job, artifact=ARTIFACT_COMBINED_SUMMARY
             )
+        if cs_bytes is not None:
             (staging / "Combined_Summary.xlsx").write_bytes(cs_bytes)
 
         run_update_reserve_summary(str(staging), method_overrides=method_overrides)

@@ -139,6 +139,22 @@ Record each restore drill result with timestamp and operator.
   python manage.py backfill_output_sheets --dry-run
   ```
 
+**Update Reserve: two upstream sources**
+- `source_job_id` names the **Summary** run, because that is the only job whose
+  output ZIP carries the reserve workbooks the LDF / CDF / method editors read.
+- `combined_summary_source_job_id` (optional, in `input_meta`) names the job whose
+  **Combined_Summary** should be carried forward. Without it the workbook comes
+  from `source_job_id`, which silently discarded any **UW Summary Parameters** run
+  layered on top — losing its Exp Ratio / RI %, `ULAE-RA` and `Discount Rate`
+  sheets, and leaving a workbook Module 2 refuses.
+- Precedence in the task: explicit CS source job → uploaded `combined_summary`
+  → `source_job_id`'s own copy (historic default).
+- Lineage follows the movement job's convention: the substantive source stays on
+  the `source_job` FK; the secondary id rides in `input_meta` and is re-resolved
+  org-scoped at run time.
+- Either order now works: applying UW Parameters *after* Update Reserve also
+  yields a complete workbook, since Update Reserve only replaces `IBNR Summary`.
+
 **Forensics for chained jobs**
 - The job detail page in the dashboard shows a lineage badge ("From: Summary
   #3f9a · ...") linking to the source job.
