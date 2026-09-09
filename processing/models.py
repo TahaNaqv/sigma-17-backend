@@ -2,6 +2,8 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+
+from core.jsonsafe import SafeJSONField
 from django.utils import timezone
 
 
@@ -62,7 +64,12 @@ class Module1Job(models.Model):
         null=True,
         blank=True,
     )
-    input_meta = models.JSONField(default=dict, blank=True)
+    # SafeJSONField, not JSONField: this carries engine output, and a
+    # Combined_Summary with blank Exp Ratio / RI % columns produces NaN for
+    # every affected row. Postgres rejects NaN in a json column, which failed
+    # the whole job AFTER the engine had already succeeded and written its
+    # workbook. See core.jsonsafe.
+    input_meta = SafeJSONField(default=dict, blank=True)
 
     # Lineage: which earlier job supplied an input artifact to this one.
     # PROTECT prevents accidental deletion of a referenced source via the ORM;
