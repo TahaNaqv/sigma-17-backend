@@ -260,3 +260,86 @@ class ExclusionReachesTheWorkbookTests(TestCase):
         path, _ = self._run("exclude_entirely", claims)
         self.assertNotIn("Large Paid", self._headers(path))
         shutil.rmtree(path, ignore_errors=True)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class LargeClaimsAfterCleanupTests(TestCase):
+    """The path production actually uses: the durable input archive.
+
+    Every other test here leaves the staged uploads in place, so they exercise
+    `_triangle_source_frame`'s LAST fallback — the one that only exists while a
+    run is in flight. A real run ends with `_cleanup_root`, which deletes that
+    folder, and the endpoint then has to read the claims back out of
+    `input_archive`. That leg had no coverage, so "This job's claims data is no
+    longer available." could have been reported for every finished job without a
+    test noticing.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        if not (FIXTURES / "claims_paid").is_dir():
+            self.skipTest("reference fixture not available")
+        self.org = Organization.objects.create(name="LCA", slug="lc-archive")
+        self.user = User.objects.create_user("lca", "lca@example.com", "pw")
+        _give_role(self.user, "ActuaryLCA", ["module1.run"], self.org)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def _finished_job(self):
+        """A job in the state a real run leaves behind: archived, staging gone."""
+        from processing.tasks import _persist_summary_claims
+        from processing.utils import init_job_work_dir, job_input_subdir, job_root
+
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.SUMMARY,
+            status=Module1Job.Status.SUCCESS,
+            input_meta={"exp_start": "01-01-2016", "exp_end": "31-12-2017"},
+        )
+        job.work_dir = f"module1_jobs/{job.id}"
+        job.save(update_fields=["work_dir"])
+        init_job_work_dir(job)
+        for kind in ("claims_paid", "claims_os"):
+            dest = job_input_subdir(job, kind)
+            for f in (FIXTURES / kind).glob("*.xlsx"):
+                shutil.copy(f, dest / f.name)
+
+        _persist_summary_claims(job)
+        job.refresh_from_db()
+        # What the task's `finally` does.
+        shutil.rmtree(job_root(job), ignore_errors=True)
+        return job
+
+    def test_claims_are_still_rankable_after_the_work_dir_is_destroyed(self):
+        job = self._finished_job()
+        self.assertTrue(job.input_archive, "summary run did not archive its claims")
+
+        resp = self.client.get(
+            f"/api/module1/jobs/{job.id}/large-claims/?per_class=0&top_n=10&rank_on=paid"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.data["report"]["claims"], "no claims ranked from the archive")
+
+    def test_outstanding_ranking_also_survives_cleanup(self):
+        """The basis the client had selected when the panel failed."""
+        job = self._finished_job()
+        resp = self.client.get(
+            f"/api/module1/jobs/{job.id}/large-claims/?per_class=1&top_n=10&rank_on=outstanding"
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+
+    def test_a_purged_job_says_so_precisely(self):
+        """Retention clears `input_archive` too, so an old job legitimately loses
+        this. The message must name that, since it is what the panel now shows."""
+        job = self._finished_job()
+        job.input_archive.delete(save=True)
+
+        resp = self.client.get(
+            f"/api/module1/jobs/{job.id}/large-claims/?per_class=0&top_n=10&rank_on=paid"
+        )
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn("no longer available", str(resp.data))
