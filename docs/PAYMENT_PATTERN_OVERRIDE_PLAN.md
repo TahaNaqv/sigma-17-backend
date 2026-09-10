@@ -1,5 +1,16 @@
 # WP3a — Payment Pattern Override
 
+> **Amended 2026-09-10.** The `Payment Pattern` derivation changed: it is now the
+> FutureCF-weighted class profile (sum the GROSS FutureCF rows per reserving class per
+> quarter, divide by the class total) rather than an *unweighted* mean of the per-row
+> conditional patterns, which counted every (UWY, Accident_Period) cohort alike no matter
+> how little cash it carried. The client reported the old average as wrong and specified
+> the pivot above. Consequence for this plan: every **−0.499%** below is now **−0.344%**.
+> The LIC-path no-op and all structural invariants are unaffected — that path never read
+> `avg_df`. The feature's rationale is unchanged: a FutureCF-weighted profile is the shape
+> of *remaining* cash flow, still not a from-inception pattern, so supplying one by hand
+> remains a real lever.
+
 > **Goal:** Let the actuary supply their own payment pattern per reserving class — by Excel
 > upload or in-app grid — in place of the engine-derived one, mirroring the Update Reserve
 > LDF surface the client pointed at.
@@ -296,9 +307,9 @@ numbers are the same numbers.
 
 ### 2.5 The `Payment Pattern` sheet stays the pattern actually used
 
-No rename, no second sheet. Today the sheet holds the conditional average because that is what
-drives the run-off; with an override it holds the override, because that is what drives the
-run-off. The sheet's contract — "the pattern this run used" — is unchanged and stays true.
+No rename, no second sheet. Today the sheet holds the FutureCF-weighted profile because that
+is what drives the run-off; with an override it holds the override, because that is what drives
+the run-off. The sheet's contract — "the pattern this run used" — is unchanged and stays true.
 
 ### 2.6 Modes and validation
 

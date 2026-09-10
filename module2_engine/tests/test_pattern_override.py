@@ -223,9 +223,15 @@ def test_derived_pattern_is_a_path_specific_noop(
         ), f"{column} moved — the LIC path should be untouched by the derived pattern"
 
     # LRC path: the deliberate correction.
+    # Was -0.00499 until 2026-09-10, when the derived Payment Pattern itself became the
+    # FutureCF-weighted class profile instead of an unweighted mean of per-row conditional
+    # patterns. The baseline moved toward the from-inception pattern, so the residual the
+    # override still corrects is smaller. It is NOT zero: a FutureCF-weighted profile is
+    # the shape of the *remaining* cash flow, which is still not a from-inception pattern,
+    # so supplying one by hand remains a real lever.
     base_lrc = _total(base_frames, "LC", "GMM LRC_Discounted_CY")
     new_lrc = _total(frames, "LC", "GMM LRC_Discounted_CY")
-    assert (new_lrc - base_lrc) / base_lrc == pytest.approx(-0.00499, abs=1e-5)
+    assert (new_lrc - base_lrc) / base_lrc == pytest.approx(-0.00344, abs=1e-5)
 
 
 def test_acceptance_map_for_a_different_pattern(combined_bytes, base_frames):
@@ -244,10 +250,12 @@ def test_acceptance_map_for_a_different_pattern(combined_bytes, base_frames):
             _total(base_frames, sheet, column), rel=1e-9
         ), f"{column} moved under a pattern override — wrong insertion point"
 
+    # The two LIC entries are untouched by the 2026-09-10 Payment Pattern change (that
+    # path never read avg_df); only the LRC entry re-based, -0.04954 -> -0.04806.
     expected = {
         ("MainSheet", "Discounting Impact"): -1.15598,
         ("MainSheet", "Change in Discounting Impact"): -1.68748,
-        ("LC", "GMM LRC_Discounted_CY"): -0.04954,
+        ("LC", "GMM LRC_Discounted_CY"): -0.04806,
     }
     for (sheet, column), want in expected.items():
         base = _total(base_frames, sheet, column)

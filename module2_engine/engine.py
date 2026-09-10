@@ -500,9 +500,21 @@ def _compute_allocate_frames(
     ].sum(axis=1) - discounted_cf_py_df[additional_matrix.columns].sum(axis=1)
     merged_df.drop(columns=["EP_Percent", "ULAE %", "RA %", "Paid CDF"], inplace=True)
 
+    # Payment Pattern: the class-level shape of *future cash flow* — the FutureCF rows
+    # pivoted by reserving class and expressed as a share of that class's total.
+    #
+    # This used to read the pattern columns off merged_df, which carries the
+    # additional_matrix PERCENTAGES concatenated above. Summing those and renormalising
+    # is an unweighted mean of per-row conditional patterns: every (UWY, Accident_Period)
+    # cohort counted the same regardless of how much cash it carried, so a small
+    # fully-developed cohort pulled the class pattern as hard as a large recent one.
+    # Weighting by the cash flow itself is what the client's pivot does and what the
+    # disclosure means (client report 2026-09-10). See pattern_override's module
+    # docstring: the LRC run-off consumed that same artefact.
     dynamic_columns = [col for col in additional_matrix.columns]
     gross_only = merged_df[merged_df["GROSS/RI"] == "GROSS"]
-    sum_columns = gross_only.groupby("RESERVINGCLASS")[dynamic_columns].sum()
+    gross_future_cf = future_cf_df[future_cf_df["GROSS/RI"] == "GROSS"]
+    sum_columns = gross_future_cf.groupby("RESERVINGCLASS")[dynamic_columns].sum()
     total_sum = sum_columns.sum(axis=1)
     avg_df = (
         sum_columns.div(total_sum, axis=0)

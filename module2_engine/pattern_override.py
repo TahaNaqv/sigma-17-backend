@@ -28,9 +28,16 @@ point of the feature:
 * **LIC path — exact no-op.** Supplying the derived pattern leaves ``additional_matrix``
   identical to 2.22e-16 and ``Discounting Impact`` unchanged. This is the strongest
   regression check available and is enforced in the tests.
-* **LRC path — deliberately moves.** ``GMM LRC_Discounted_CY`` shifts -0.499%, because
-  ``avg_df`` was holding a conditional *average across cohorts of every maturity*, not a
-  from-inception pattern. Correcting that is precisely what the client asked for.
+* **LRC path — deliberately moves.** ``GMM LRC_Discounted_CY`` shifts -0.344%, because
+  ``avg_df`` holds the shape of *remaining* cash flow, not a from-inception pattern.
+  Correcting that is precisely what the client asked for.
+
+  This was -0.499% until 2026-09-10. ``avg_df`` used to be an *unweighted* mean of the
+  per-row conditional patterns — every (UWY, Accident_Period) cohort counted alike no
+  matter how little cash it carried — and now it is the FutureCF-weighted class profile
+  (engine.py, "Payment Pattern"), which the client reported as the correct derivation.
+  That closed part of the gap; the rest is the conditional-vs-from-inception difference,
+  which only a supplied pattern can close.
 
 (The knock-on to ``LC Discounted_CY`` is -41.96%: the loss component is
 ``max(GMM LRC - PAA_LRC, 0)``, a threshold residual, so a sub-1% move in LRC is amplified

@@ -127,6 +127,13 @@ def test_no_shock_leaves_selected_ulr_untouched():
 
 #: (sheet, column) -> (ra+10%, disc+5bp, ulr+5pp) expected RELATIVE deltas.
 #: ``None`` means "structurally does not respond" and is asserted as exactly zero.
+#:
+#: Re-measured 2026-09-10 when the Payment Pattern stopped being an unweighted mean of
+#: per-row conditional patterns and became the FutureCF-weighted class profile the client
+#: asked for (engine.py, "Payment Pattern"). Only the four *discounted* LRC rows moved:
+#: the pattern re-times cash flow, so it changes which discount factor each instalment
+#: meets. Every MainSheet row, PAA_LRC and GMM LRC_Undiscounted are unchanged to the
+#: digit — a pattern only redistributes cash in time and still sums to 1.
 PROPAGATION = {
     ("MainSheet", "IBNR"): (None, None, None),
     ("MainSheet", "ULAE"): (None, None, None),
@@ -137,10 +144,10 @@ PROPAGATION = {
     ("MainSheet", "Change in Discounting Impact"): (None, -0.151076539, None),
     ("LC", "PAA_LRC"): (None, None, None),
     ("LC", "GMM LRC_Undiscounted"): (0.002799839, None, 0.067621560),
-    ("LC", "GMM LRC_Discounted_CY"): (0.002795845, -0.000389109, 0.067648963),
-    ("LC", "GMM LRC_Discounted_PY"): (0.002796151, None, 0.067646894),
-    ("LC", "LC Discounted_CY"): (0.068253752, -0.006697818, 1.450768879),
-    ("LC", "Loss Recovery Component"): (0.068253752, -0.006697818, 1.450768879),
+    ("LC", "GMM LRC_Discounted_CY"): (0.002797278960, -0.000402006444, 0.067630201505),
+    ("LC", "GMM LRC_Discounted_PY"): (0.002797495813, None, 0.067629308412),
+    ("LC", "LC Discounted_CY"): (0.076258281186, -0.008458129280, 1.620881451778),
+    ("LC", "Loss Recovery Component"): (0.076258281186, -0.008458129280, 1.620881451778),
 }
 
 
