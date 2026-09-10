@@ -17,6 +17,8 @@ Each value line carries a ``buckets`` dict; each (bucket) entry has:
              Module 2 (``mapping.PRE_SIGNED_SOURCE_COLUMNS``); compute then passes the
              value through instead of negating an already-negative figure.
     override_key — for tier O, the stable key of the class×cohort override input.
+    amended — present when the client corrected the formula after sign-off; the value is
+             the rationale (see ``CLIENT_AMENDMENTS``).
 
 Structural lines (opening/closing/subtotal/section) carry no bucket sources; their
 per-bucket SUM formulas are preserved under ``subtotal_formulas`` for faithful rendering.
@@ -44,6 +46,46 @@ OUT = PKG / "mapping_source.json"
 
 OVERRIDE_KEYS = EXTRACT["_meta"]["override_inputs_RI"]  # Template-Info column letter -> key
 STRUCTURAL = {"opening", "closing", "subtotal", "section"}
+
+#: Formula corrections the client issued *after* signing off Module2_Final_Output.xlsx,
+#: applied on top of the verbatim extract so ``client_source_extract.json`` stays a faithful
+#: copy of their file. Keyed by (sheet, Excel row, bucket) -> (expected expr, corrected expr,
+#: rationale). The expected expr is asserted: if the client re-issues the workbook with the
+#: fix already in it, generation fails loudly here instead of silently double-applying.
+CLIENT_AMENDMENTS: dict[tuple[str, int, str], tuple[str, str, str]] = {
+    ("Gross", 29, "LRC_excl_LC"): (
+        "Rec_GOP_curr-Rec_Provision_prev",
+        "Rec_Provision_curr-Rec_Provision_prev",
+        "2026-09-10 client correction: 'IFRS Summary'!DA1 -> DF1. The line is the "
+        "period-over-period change in the premium debtors' provision, but the signed file "
+        "referenced Rec_GOP_curr (premium receivable) against Rec_Provision_prev, "
+        "subtracting the whole receivable balance from insurance revenue. Now the same "
+        "curr-minus-prev shape as row 28 (Change in Unearned Premium Reserves).",
+    ),
+    ("Gross", 41, "LRC_excl_LC"): (
+        "DAC_curr-DAC_prev",
+        "DAC_prev-DAC_curr",
+        "2026-09-10 client correction: 'IFRS Summary'!F1-CH1 -> CH1-F1 (operand order). "
+        "DAC amortisation enters insurance service expenses as the decrease in DAC over "
+        "the period, so the line is prev minus curr.",
+    ),
+}
+
+
+def _amend(sheet: str, row: int, bucket: str, cell: dict) -> dict:
+    """Apply a post-sign-off client correction to one extracted bucket cell."""
+    amendment = CLIENT_AMENDMENTS.get((sheet, row, bucket))
+    if not amendment:
+        return cell
+    expected, corrected, _why = amendment
+    actual = cell.get("source_expr")
+    if actual != expected:
+        raise SystemExit(
+            f"amendment for {sheet} row {row} {bucket} expected source_expr {expected!r} "
+            f"but the extract holds {actual!r} — re-check CLIENT_AMENDMENTS against the "
+            f"current client file before regenerating."
+        )
+    return {**cell, "source_expr": corrected, "amended": True}
 
 
 def _opening_rows(client_lines: list[dict]) -> set[int]:
@@ -87,6 +129,10 @@ def build() -> dict:
             "— source already stored signed); {p}=_prev(open)/_curr(close); "
             "tiers D=direct column, Δ=derived expr, O=class×cohort override input, M=manual/0.",
             "schema_version": SCHEMA["schema_version"],
+            "client_amendments": [
+                f"{sheet} row {row} {bucket}: {old} -> {new_}"
+                for (sheet, row, bucket), (old, new_, _why) in CLIENT_AMENDMENTS.items()
+            ],
         }
     }
     for sname, sh in SCHEMA["sheets"].items():
@@ -114,8 +160,11 @@ def build() -> dict:
                 cell = (cln.get("buckets") or {}).get(b)
                 if not cell:
                     continue
+                cell = _amend(sname, sln["row"], b, cell)
                 tier, source, okey = _tier_and_source(cell, in_opening=in_opening)
                 bentry: dict = {"sign": cell.get("sign"), "tier": tier, "source": source}
+                if cell.get("amended"):
+                    bentry["amended"] = CLIENT_AMENDMENTS[(sname, sln["row"], b)][2]
                 if is_pre_signed(source):
                     bentry["apply_sign"] = False
                 if okey:

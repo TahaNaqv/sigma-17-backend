@@ -196,3 +196,23 @@ def test_opening_lic_matches_straight_sum_of_build_up_columns():
         "Claim_Pay_prev",
     ))
     assert g.opening["LIC_excl_RA"] == expected
+
+
+def test_change_in_premium_debtors_provision_uses_provision_not_receivable():
+    """Client correction (DA1 -> DF1): the line is the change in the *provision*, so it
+    reads Rec_Provision_curr − Rec_Provision_prev. The signed file referenced
+    Rec_GOP_curr (premium receivable), which subtracted the whole receivable balance
+    from insurance revenue. Sign '-/+' still negates, as on Change in UPR."""
+    row = _base_row()
+    row["Rec_Provision_prev"], row["Rec_Provision_curr"] = 20.0, 35.0
+    row["Rec_GOP_curr"] = 900.0  # must not enter this line
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    assert g.line_values["change_in_premium_debtors_provision_net_of_write_offs"][
+        "LRC_excl_LC"] == -15.0
+
+
+def test_change_in_dac_is_prev_minus_curr():
+    """Client correction (F1-CH1 -> CH1-F1): DAC amortisation is the decrease in DAC."""
+    row = _base_row()  # DAC_prev = 10.0, DAC_curr = 12.0
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    assert g.line_values["change_in_dac"]["LRC_excl_LC"] == -2.0

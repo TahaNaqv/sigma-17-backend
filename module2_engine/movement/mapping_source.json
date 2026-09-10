@@ -5,7 +5,11 @@
   "source_sha256": "1de8f8f0f4e066cae0e96f80fe7279a587571bfc2d595791b2817f070438e3f0",
   "generated_by": "scripts/gen_movement_mapping.py from client_source_extract.json + schema_source.json",
   "legend": "sign applied by compute (mult=-1 if sign starts '-', unless apply_sign=false — source already stored signed); {p}=_prev(open)/_curr(close); tiers D=direct column, Δ=derived expr, O=class×cohort override input, M=manual/0.",
-  "schema_version": "2026.06"
+  "schema_version": "2026.06",
+  "client_amendments": [
+   "Gross row 29 LRC_excl_LC: Rec_GOP_curr-Rec_Provision_prev -> Rec_Provision_curr-Rec_Provision_prev",
+   "Gross row 41 LRC_excl_LC: DAC_curr-DAC_prev -> DAC_prev-DAC_curr"
+  ]
  },
  "Gross": {
   "coverage": {
@@ -341,7 +345,8 @@
      "LRC_excl_LC": {
       "sign": "-/+",
       "tier": "Δ",
-      "source": "Rec_GOP_curr-Rec_Provision_prev"
+      "source": "Rec_Provision_curr-Rec_Provision_prev",
+      "amended": "2026-09-10 client correction: 'IFRS Summary'!DA1 -> DF1. The line is the period-over-period change in the premium debtors' provision, but the signed file referenced Rec_GOP_curr (premium receivable) against Rec_Provision_prev, subtracting the whole receivable balance from insurance revenue. Now the same curr-minus-prev shape as row 28 (Change in Unearned Premium Reserves)."
      }
     }
    },
@@ -480,7 +485,8 @@
      "LRC_excl_LC": {
       "sign": "+/-",
       "tier": "Δ",
-      "source": "DAC_curr-DAC_prev"
+      "source": "DAC_prev-DAC_curr",
+      "amended": "2026-09-10 client correction: 'IFRS Summary'!F1-CH1 -> CH1-F1 (operand order). DAC amortisation enters insurance service expenses as the decrease in DAC over the period, so the line is prev minus curr."
      }
     }
    },
