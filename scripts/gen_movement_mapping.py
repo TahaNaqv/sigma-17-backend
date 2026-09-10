@@ -9,10 +9,13 @@ from the client's ``Module2_Final_Output.xlsx`` Gross/RI sheets) joined to the s
 Each value line carries a ``buckets`` dict; each (bucket) entry has:
     sign   — "+" | "-" | "+/-" | "-/+"  (compute applies it: mult = -1 if sign starts "-").
     tier   — D (direct column) | Δ (derived expr) | O (manual override input) | M (manual/0).
-    source — positive-magnitude column/expression over IFRS Summary columns, or null.
-             Opening build-up lines are templated with ``{p}`` (=_prev opening / _curr
-             closing) so the roll-forward can compute both the opening balance and the
-             independent EOP balance for the reconciliation control.
+    source — column/expression over IFRS Summary columns, or null. Opening build-up
+             lines are templated with ``{p}`` (=_prev opening / _curr closing) so the
+             roll-forward can compute both the opening balance and the independent EOP
+             balance for the reconciliation control.
+    apply_sign — emitted (false) when the source column is already stored signed by
+             Module 2 (``mapping.PRE_SIGNED_SOURCE_COLUMNS``); compute then passes the
+             value through instead of negating an already-negative figure.
     override_key — for tier O, the stable key of the class×cohort override input.
 
 Structural lines (opening/closing/subtotal/section) carry no bucket sources; their
@@ -26,9 +29,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
-PKG = Path(__file__).resolve().parent.parent / "module2_engine" / "movement"
+BACKEND = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BACKEND))
+
+from module2_engine.movement.mapping import is_pre_signed  # noqa: E402
+
+PKG = BACKEND / "module2_engine" / "movement"
 EXTRACT = json.loads((PKG / "client_source_extract.json").read_text(encoding="utf-8"))
 SCHEMA = json.loads((PKG / "schema_source.json").read_text(encoding="utf-8"))
 OUT = PKG / "mapping_source.json"
@@ -74,7 +83,8 @@ def build() -> dict:
             "source": EXTRACT["_meta"]["source_file"],
             "source_sha256": EXTRACT["_meta"]["source_sha256"],
             "generated_by": "scripts/gen_movement_mapping.py from client_source_extract.json + schema_source.json",
-            "legend": "sign applied by compute (mult=-1 if sign starts '-'); {p}=_prev(open)/_curr(close); "
+            "legend": "sign applied by compute (mult=-1 if sign starts '-', unless apply_sign=false "
+            "— source already stored signed); {p}=_prev(open)/_curr(close); "
             "tiers D=direct column, Δ=derived expr, O=class×cohort override input, M=manual/0.",
             "schema_version": SCHEMA["schema_version"],
         }
@@ -106,6 +116,8 @@ def build() -> dict:
                     continue
                 tier, source, okey = _tier_and_source(cell, in_opening=in_opening)
                 bentry: dict = {"sign": cell.get("sign"), "tier": tier, "source": source}
+                if is_pre_signed(source):
+                    bentry["apply_sign"] = False
                 if okey:
                     bentry["override_key"] = okey
                 buckets[b] = bentry

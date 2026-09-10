@@ -170,3 +170,29 @@ def test_override_frame_fills_ri_manual_line():
     # without the override the same line is 0
     ri0 = C.build_sama_movement(_frames([_base_row()])).pairs[0].sheets["RI"]
     assert ri0.line_values[lid]["Loss_Recovery_Component"] == 0.0
+
+
+def test_pre_signed_source_is_not_negated_again():
+    """Discounting impact / S&S carry sign '-' but Module 2 already stores those columns
+    signed (discounted CF − undiscounted CF ≤ 0; salvage & subrogation negative, summed
+    straight by ``engine.create_lic_table``). They must pass through, not flip positive —
+    the client reported the disclosure showing a positive discounting impact."""
+    row = _base_row()  # Discounting Impact_prev = -3.0, S&S_prev = 2.0, SS_prev = 1.0
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    assert g.line_values["discounting_impact"]["LIC_excl_RA"] == -3.0
+    assert g.line_values["s_s_o_s"]["LIC_excl_RA"] == 2.0
+    assert g.line_values["s_s_ibnr"]["LIC_excl_RA"] == 1.0
+
+
+def test_opening_lic_matches_straight_sum_of_build_up_columns():
+    """The opening LIC excl. RA equals the plain sum of the LIC build-up columns —
+    the same identity ``engine.create_lic_table`` uses. This is what breaks if a
+    pre-signed column is negated a second time."""
+    row = _base_row()
+    g = C.build_sama_movement(_frames([row])).pairs[0].sheets["Gross"]
+    expected = sum(row[c] for c in (
+        "GROSS - Outstanding_prev", "GROSS - SS_prev", "GROSS - Payment_prev",
+        "GROSS - S&S_prev", "GROSS - ULAE_prev", "GROSS - Discounting Impact_prev",
+        "Claim_Pay_prev",
+    ))
+    assert g.opening["LIC_excl_RA"] == expected

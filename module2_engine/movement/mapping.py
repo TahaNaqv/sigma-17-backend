@@ -21,6 +21,39 @@ from .schema import SCHEMA
 
 _SOURCE_PATH = Path(__file__).with_name("mapping_source.json")
 
+#: IFRS Summary columns that Module 2 already emits *signed* — the stored value carries
+#: the direction the disclosure wants, so the sign column is a reading annotation, not a
+#: multiplier. Salvage & subrogation and the discounting impact are stored negative
+#: (``engine.create_lic_table`` sums the LIC build-up columns straight, with no per-column
+#: sign, and ``Discounting Impact`` is discounted CF − undiscounted CF ≤ 0). Re-applying
+#: the "-" to these would flip them positive. The positive-magnitude columns (DAC,
+#: premium receivable, commission, cash flows) are *not* here: they carry an explicit
+#: sign in ``engine.LRC_COMPONENTS`` and the disclosure's own "-" is what negates them.
+#: Suffix-agnostic: matched after stripping a trailing ``_{p}`` / ``_prev`` / ``_curr``.
+PRE_SIGNED_SOURCE_COLUMNS = frozenset({
+    "GROSS - S&S",
+    "GROSS - SS",
+    "GROSS - Discounting Impact",
+    "RI - S&S",
+    "RI - SS",
+    "RI - Discounting Impact",
+})
+
+_PERIOD_SUFFIX = ("_{p}", "_prev", "_curr")
+
+
+def is_pre_signed(source: str | None) -> bool:
+    """True if ``source`` is a bare reference to a column already stored signed."""
+    if not source:
+        return False
+    expr = source.strip()
+    for suffix in _PERIOD_SUFFIX:
+        if expr.endswith(suffix):
+            expr = expr[: -len(suffix)]
+            break
+    return expr in PRE_SIGNED_SOURCE_COLUMNS
+
+
 #: Tiers a (line, bucket) value can take.
 TIER_DIRECT = "D"  # a single direct column of IFRS Summary
 TIER_DERIVED = "Δ"  # an arithmetic expression over IFRS Summary columns
@@ -39,10 +72,18 @@ class BucketSource:
     tier: str  # D | Δ | O | M
     source: str | None  # positive-magnitude column/expression, or None
     override_key: str | None = None  # for tier O: the override input key
+    apply_sign: bool = True  # False when the source column is already stored signed
 
     @property
     def sign_mult(self) -> float:
-        """Direction multiplier the engine applies to the resolved magnitude."""
+        """Direction multiplier the engine applies to the resolved magnitude.
+
+        A "-" bucket whose source is already stored signed (``apply_sign`` False, see
+        ``PRE_SIGNED_SOURCE_COLUMNS``) passes through: the sign column there records how
+        the line reads, and negating again would flip it the wrong way.
+        """
+        if not self.apply_sign:
+            return 1.0
         return -1.0 if (self.sign or "").strip().startswith("-") else 1.0
 
 
@@ -77,6 +118,7 @@ def _load() -> dict[tuple[str, str], LineMapping]:
                     tier=bs["tier"],
                     source=bs.get("source"),
                     override_key=bs.get("override_key"),
+                    apply_sign=bs.get("apply_sign", True),
                 )
                 for b, bs in (m.get("buckets") or {}).items()
             }
@@ -124,7 +166,8 @@ def validate_mapping() -> list[str]:
     Asserts: every schema line has exactly one mapping entry and vice-versa; buckets only
     appear on value ('input') lines and only on the sheet's declared value buckets; a
     D/Δ bucket carries a source expression; an O bucket carries an override_key; structural
-    lines carry no bucket sources. Does NOT assert actuarial correctness of the source
+    lines carry no bucket sources; a bucket's ``apply_sign`` agrees with
+    ``PRE_SIGNED_SOURCE_COLUMNS``. Does NOT assert actuarial correctness of the source
     expressions or signs — the reconciliation control (compute) surfaces those.
     """
     problems: list[str] = []
@@ -152,4 +195,10 @@ def validate_mapping() -> list[str]:
                     problems.append(f"{name}.{ln.id}.{b}: tier O but no override_key")
                 if bs.tier in DATA_BACKED and bs.override_key:
                     problems.append(f"{name}.{ln.id}.{b}: data-backed tier must not have override_key")
+                if bs.apply_sign is is_pre_signed(bs.source):
+                    want = "apply_sign=False" if bs.apply_sign else "apply_sign=True"
+                    problems.append(
+                        f"{name}.{ln.id}.{b}: source {bs.source!r} disagrees with "
+                        f"PRE_SIGNED_SOURCE_COLUMNS — expected {want}"
+                    )
     return problems

@@ -4,7 +4,7 @@
   "source": "sigma-17-desktop-app/Output Module 2/Module2_Final_Output.xlsx (sheets Gross, RI)",
   "source_sha256": "1de8f8f0f4e066cae0e96f80fe7279a587571bfc2d595791b2817f070438e3f0",
   "generated_by": "scripts/gen_movement_mapping.py from client_source_extract.json + schema_source.json",
-  "legend": "sign applied by compute (mult=-1 if sign starts '-'); {p}=_prev(open)/_curr(close); tiers D=direct column, Δ=derived expr, O=class×cohort override input, M=manual/0.",
+  "legend": "sign applied by compute (mult=-1 if sign starts '-', unless apply_sign=false — source already stored signed); {p}=_prev(open)/_curr(close); tiers D=direct column, Δ=derived expr, O=class×cohort override input, M=manual/0.",
   "schema_version": "2026.06"
  },
  "Gross": {
@@ -143,7 +143,8 @@
      "LIC_excl_RA": {
       "sign": "-",
       "tier": "D",
-      "source": "GROSS - S&S_{p}"
+      "source": "GROSS - S&S_{p}",
+      "apply_sign": false
      }
     }
    },
@@ -155,7 +156,8 @@
      "LIC_excl_RA": {
       "sign": "-",
       "tier": "D",
-      "source": "GROSS - SS_{p}"
+      "source": "GROSS - SS_{p}",
+      "apply_sign": false
      }
     }
    },
@@ -218,7 +220,8 @@
      "LIC_excl_RA": {
       "sign": "-",
       "tier": "D",
-      "source": "GROSS - Discounting Impact_{p}"
+      "source": "GROSS - Discounting Impact_{p}",
+      "apply_sign": false
      },
      "Risk_Adjustment": {
       "sign": "-",
@@ -966,7 +969,8 @@
      "Amounts_Recoverable_IC": {
       "sign": "-",
       "tier": "D",
-      "source": "RI - S&S_{p}"
+      "source": "RI - S&S_{p}",
+      "apply_sign": false
      }
     }
    },
@@ -978,7 +982,8 @@
      "Amounts_Recoverable_IC": {
       "sign": "-",
       "tier": "D",
-      "source": "RI - SS_{p}"
+      "source": "RI - SS_{p}",
+      "apply_sign": false
      }
     }
    },
@@ -1041,7 +1046,8 @@
      "Amounts_Recoverable_IC": {
       "sign": "-",
       "tier": "D",
-      "source": "RI - Discounting Impact_{p}"
+      "source": "RI - Discounting Impact_{p}",
+      "apply_sign": false
      },
      "Risk_Adjustment": {
       "sign": "-",
