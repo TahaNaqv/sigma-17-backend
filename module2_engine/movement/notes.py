@@ -118,7 +118,7 @@ def build_notes(view: dict) -> dict[str, NoteTable]:
             )
         if src.kind == "note":
             ref = src.ref
-            return _num(cell(ref.note, ref.line, ref.column))
+            return ref.factor * _num(cell(ref.note, ref.line, ref.column))
         if src.kind == "sum":
             return sum(_num(cell(note, lid, column)) for lid in src.lines)
         if src.kind == "row_total":
@@ -143,6 +143,59 @@ def build_notes(view: dict) -> dict[str, NoteTable]:
             name=name, title=sheet.title, columns=sheet.columns, lines=lines
         )
     return tables
+
+
+# ── statements presented by reserving class (client revision R3) ─────────────
+
+#: Column key for the entity total on a class-columned statement. Kept first so the
+#: statement reads Total-then-detail, which is how the client asked for it.
+TOTAL_COLUMN = "Total"
+
+
+def build_statement_by_class(views: list[dict], note: str = "IS") -> NoteTable:
+    """Re-present one statement with a column per reserving class, ``Total`` on the left.
+
+    The note layer is a linear combination of movement line values and the movement
+    results are additive across (class, UWY), so a class column is just the same note
+    evaluated on that class's view — no allocation, no new measurement. ``Total`` is the
+    entity view rather than a re-sum of the columns, so it stays the number the entity
+    statement shows even if a view is missing.
+
+    ``views`` is ``compute.aggregated_views`` output; cohort views are ignored. With no
+    class views this degrades to the plain single-column statement.
+    """
+    entity = next((v for v in views if v.get("level") == "entity"), None)
+    class_views = [v for v in views if v.get("level") == "class"]
+
+    base_view = entity if entity is not None else {"sheets": {}}
+    base = build_notes(base_view)[note]
+    per_class = {
+        str(v.get("reserving_class") or v.get("label")): build_notes(v)[note]
+        for v in class_views
+    }
+    columns = (TOTAL_COLUMN, *per_class)
+
+    lines = tuple(
+        NoteLineValue(
+            id=ln.id,
+            row=ln.row,
+            label=ln.label,
+            kind=ln.kind,
+            values=(
+                {
+                    TOTAL_COLUMN: ln.values.get(TOTAL_COLUMN),
+                    **{
+                        rc: tbl.line(ln.id).values.get(TOTAL_COLUMN)
+                        for rc, tbl in per_class.items()
+                    },
+                }
+                if ln.kind != "section"
+                else {}
+            ),
+        )
+        for ln in base.lines
+    )
+    return NoteTable(name=base.name, title=base.title, columns=columns, lines=lines)
 
 
 # ── tie-out controls (plan §6.5) ─────────────────────────────────────────────
@@ -249,10 +302,13 @@ def note_controls(
             ))
     if is_ is not None:
         result = is_.value("insurance_service_result")
+        # Four components since revision R2: the reinsurance result is presented as its
+        # expense and income halves rather than one combined line.
         parts = (is_.value("insurance_revenue") + is_.value("insurance_service_expenses")
-                 + is_.value("net_expenses_from_reinsurance_contracts"))
+                 + is_.value("expenses_from_reinsurance_contracts")
+                 + is_.value("income_from_reinsurance_contracts"))
         out.append(ControlResult(
-            id="C4c", label="IS insurance service result == revenue + expenses + RI",
+            id="C4c", label="IS insurance service result == revenue + expenses + RI expense + RI income",
             view=label, note_value=result, movement_value=parts,
             passed=abs(result - parts) <= max(tol_abs, tol_rel * max(abs(result), 1.0)),
         ))

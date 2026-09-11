@@ -1550,6 +1550,8 @@ class Module2MovementNotesView(APIView):
                 # Presentation corrections applied to defects in the client's template,
                 # still pending their confirmation — surfaced so the UI can disclose them.
                 "deviations": payload.get("deviations") or [],
+                # Post-sign-off changes the client requested (note revisions R1-R3).
+                "revisions": payload.get("revisions") or [],
                 "views": views,
             }
         )

@@ -32,7 +32,7 @@ _SOURCE_PATH = Path(__file__).with_name("notes_source.json")
 
 #: Bumped independently of the movement SCHEMA_VERSION so a note-only revision does not
 #: invalidate movement-schema-keyed consumers (plan §12.1).
-NOTES_SCHEMA_VERSION = "2026.07"
+NOTES_SCHEMA_VERSION = "2026.09"  # 2026-09-10: client revisions R1-R3 to the Income Statement
 
 STATUS_ASSUMED = "assumed"
 STATUS_CONFIRMED = "client_confirmed"
@@ -50,6 +50,150 @@ class Deviation:
     resolution: str  # what we do instead
     evidence: str  # why — the tie-out or structural argument
     status: str = STATUS_ASSUMED
+
+
+@dataclass(frozen=True)
+class Revision:
+    """One line-level change the client issued *after* signing off the note template.
+
+    ``DEVIATIONS`` corrects defects in the client's file; a ``Revision`` records a change
+    the client themselves asked for. Kept apart so the two never blur: a deviation is ours
+    to justify, a revision is theirs to own.
+
+    ``op`` is one of:
+      ``patch``  — replace ``sources`` (and optionally label/id/kind/row) of the line at ``row``
+      ``insert`` — add a new line at ``row`` (must not already exist)
+    """
+
+    id: str
+    note: str
+    row: int
+    op: str  # patch | insert
+    request: str  # what the client asked for, verbatim where possible
+    rationale: str  # why this is the reading we implemented
+    line: dict | None = None  # insert: the whole line; patch: the keys to overwrite
+
+
+#: The client's post-sign-off revisions to the note sheets.
+#:
+#: 2026-09-10 — Income Statement. Three asks, delivered as R1-R3 below:
+#:   1. sign changes on the four cells that cite Gross_Note / RI_Note / the movement sheets
+#:   2. the combined reinsurance result split into its expense and income halves
+#:   3. the sheet presented by reserving class with Total on the left (see
+#:      ``notes.build_statement_by_class`` — a presentation change, not a schema one)
+#:
+#: Ask 2 also removes a double count that the combined line carried: IS row 7 cited
+#: RI_Note row 22, which is ``13 + 19 + 21``, while IS row 15 separately cites the same
+#: RI movement row 48 that RI_Note row 21 holds. Splitting row 7 into rows 13 and 19 leaves
+#: the reinsurance finance expense in the finance line alone, where the statement puts it.
+REVISIONS: tuple[Revision, ...] = (
+    Revision(
+        id="R1",
+        note="IS",
+        row=5,
+        op="patch",
+        request="=-Gross_Note!F13 (was =Gross_Note!F13) — 'sign change'",
+        rationale=(
+            "The statement is presented result-positive: revenue is income and must add to "
+            "the Insurance service result. Gross_Note row 13 already carries the "
+            "expense-positive movement convention (deviation D7), so the statement negates "
+            "it on the way in."
+        ),
+        line={"sources": {"Total": {"kind": "note", "ref": {
+            "note": "Gross_Note", "column": "Total", "row": 13, "factor": -1.0}}}},
+    ),
+    Revision(
+        id="R1b",
+        note="IS",
+        row=6,
+        op="patch",
+        request="=-Gross_Note!F20 (was =Gross_Note!F20) — 'sign change'",
+        rationale="Same convention flip as R1, applied to the service-expense total.",
+        line={"sources": {"Total": {"kind": "note", "ref": {
+            "note": "Gross_Note", "column": "Total", "row": 20, "factor": -1.0}}}},
+    ),
+    Revision(
+        id="R2a",
+        note="IS",
+        row=7,
+        op="patch",
+        request="=-RI_Note!F13 (was =RI_Note!F22) — 'Expand'",
+        rationale=(
+            "The combined reinsurance result is split; this half is the ceded premium "
+            "allocation (RI_Note row 13), the expense side, negated to match R1."
+        ),
+        line={
+            "id": "expenses_from_reinsurance_contracts",
+            "label": "Expenses from reinsurance contracts",
+            "sources": {"Total": {"kind": "note", "ref": {
+                "note": "RI_Note", "column": "Total", "row": 13, "factor": -1.0}}},
+        },
+    ),
+    Revision(
+        id="R2c",
+        note="IS",
+        row=8,
+        op="patch",
+        request="'Insurance service result' now sums four lines, not three",
+        rationale=(
+            "Moved from row 8 to row 9 to make room for R2b, and its SUM widened to rows "
+            "5:8. The client's mock still shows =SUM(C5:C7) beneath four input lines, which "
+            "cannot be what they mean — it would drop the new income line from the result."
+        ),
+        line={"row": 9, "sources": {"Total": {"kind": "sum", "rows": [5, 6, 7, 8]}}},
+    ),
+    Revision(
+        id="R2b",
+        note="IS",
+        row=8,
+        op="insert",
+        request="=RI_Note!F15 — 'Expand' (new line)",
+        rationale=(
+            "The income half of the split. The client wrote F15, which in their RI_Note is "
+            "the *section header* 'Amounts recoverable from reinsurers' and holds no value "
+            "— the block's value is its net subtotal at row 19, which is also the term "
+            "RI_Note row 22 contributed to the combined line being replaced. Read as row 19; "
+            "a literal F15 would make the line permanently zero. Flagged for confirmation."
+        ),
+        line={
+            "row": 8,
+            "id": "income_from_reinsurance_contracts",
+            "label": "Income from reinsurance contracts",
+            "kind": "input",
+            "sources": {"Total": {"kind": "note", "ref": {
+                "note": "RI_Note", "column": "Total", "row": 19, "factor": 1.0}}},
+        },
+    ),
+    Revision(
+        id="R2d",
+        note="IS",
+        row=17,
+        op="patch",
+        request="follow-on: 'Net insurance and investment result' cited row 8",
+        rationale="Insurance service result moved to row 9 (R2c); the citation follows it.",
+        line={"sources": {"Total": {"kind": "sum", "rows": [14, 15, 16, 10, 11, 12, 9]}}},
+    ),
+    Revision(
+        id="R3a",
+        note="IS",
+        row=14,
+        op="patch",
+        request="=-Gross!J57 (was =Gross!J57) — 'sign change'",
+        rationale="Statement sign convention, as R1; the movement term carries the factor.",
+        line={"sources": {"Total": {"kind": "movement", "terms": [
+            {"sheet": "Gross", "bucket": "Total", "row": 57, "factor": -1.0}]}}},
+    ),
+    Revision(
+        id="R3b",
+        note="IS",
+        row=15,
+        op="patch",
+        request="=-RI!K48 (was =RI!K48) — 'sign change'",
+        rationale="Statement sign convention, as R1.",
+        line={"sources": {"Total": {"kind": "movement", "terms": [
+            {"sheet": "RI", "bucket": "Total", "row": 48, "factor": -1.0}]}}},
+    ),
+)
 
 
 #: The deviation ledger (plan §8). Ordered by defect id.
@@ -231,6 +375,9 @@ class NoteRef:
     note: str
     line: str
     column: str
+    #: Direction applied to the referenced value. The statements re-present the notes with
+    #: their own sign convention, so a cell may cite a note line and negate it.
+    factor: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -309,7 +456,8 @@ def _build_source(raw: dict, *, row_ids: dict[int, str], note_row_ids: dict[str,
             kind=kind,
             ref=NoteRef(note=ref["note"],
                         line=target_rows.get(ref["row"], f"<row {ref['row']}>"),
-                        column=ref["column"]),
+                        column=ref["column"],
+                        factor=float(ref.get("factor", 1.0))),
             client_literal=literal,
         )
     if kind == "sum":
@@ -330,6 +478,31 @@ def _build_source(raw: dict, *, row_ids: dict[int, str], note_row_ids: dict[str,
 @lru_cache(maxsize=1)
 def _load() -> NotesSchema:
     raw = json.loads(_SOURCE_PATH.read_text(encoding="utf-8"))
+
+    # Apply the client's own post-sign-off revisions first: they add and renumber lines,
+    # so the deviation ledger and every row->id resolution below must see the final layout.
+    for rev in REVISIONS:
+        sheet = raw["sheets"].get(rev.note)
+        if sheet is None:
+            continue  # surfaced by validate_notes_schema()
+        rows = {ln["row"]: ln for ln in sheet["lines"]}
+        if rev.op == "insert":
+            if rev.row in rows:
+                raise ValueError(
+                    f"revision {rev.id}: {rev.note} row {rev.row} already exists — the "
+                    f"source now carries this line, so the revision is stale."
+                )
+            sheet["lines"].append(dict(rev.line or {}))
+        elif rev.op == "patch":
+            line = rows.get(rev.row)
+            if line is None:
+                raise ValueError(
+                    f"revision {rev.id}: {rev.note} has no row {rev.row} to patch."
+                )
+            line.update(dict(rev.line or {}))
+        else:
+            raise ValueError(f"revision {rev.id}: unknown op {rev.op!r}")
+        sheet["lines"].sort(key=lambda ln: ln["row"])
 
     # Apply the deviation ledger to the raw source before resolving references.
     by_note: dict[str, dict[int, dict]] = {}

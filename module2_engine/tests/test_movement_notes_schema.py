@@ -173,9 +173,35 @@ def test_is_and_bs_read_the_note_totals():
 
     assert _line("IS", 5).columns["Total"].ref.line == "insurance_revenue"
     assert _line("IS", 6).columns["Total"].ref.line == "insurance_service_expenses_2"
-    assert _line("IS", 7).columns["Total"].ref.line == "total_changes_in_the_statement_of_income"
-    for row in (5, 6, 7):
+    # R2 — the combined reinsurance result is split into its expense and income halves.
+    assert _line("IS", 7).columns["Total"].ref.line == "allocation_of_reinsurance_premium"
+    assert _line("IS", 8).columns["Total"].ref.line == "amounts_recoverable_from_reinsurers_net"
+    for row in (5, 6, 7, 8):
         assert _line("IS", row).columns["Total"].ref.column == "Total"
+
+
+def test_is_statement_signs_follow_the_client_revision():
+    """R1/R2/R3 — the statement negates the expense-positive note/movement values it cites,
+    and takes the reinsurance income half unflipped."""
+    assert _line("IS", 5).columns["Total"].ref.factor == -1.0
+    assert _line("IS", 6).columns["Total"].ref.factor == -1.0
+    assert _line("IS", 7).columns["Total"].ref.factor == -1.0
+    assert _line("IS", 8).columns["Total"].ref.factor == 1.0
+    assert _line("IS", 14).columns["Total"].terms[0].factor == -1.0
+    assert _line("IS", 15).columns["Total"].terms[0].factor == -1.0
+
+
+def test_is_service_result_sums_all_four_input_lines():
+    src = _line("IS", 9).columns["Total"]
+    assert src.kind == "sum"
+    assert src.lines == (
+        "insurance_revenue",
+        "insurance_service_expenses",
+        "expenses_from_reinsurance_contracts",
+        "income_from_reinsurance_contracts",
+    )
+    # and the downstream result still cites it after the row 8 -> 9 move
+    assert "insurance_service_result" in _line("IS", 17).columns["Total"].lines
 
 
 def test_is_finance_lines_read_the_movement_total_column():

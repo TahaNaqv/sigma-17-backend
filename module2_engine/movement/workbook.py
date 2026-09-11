@@ -24,11 +24,17 @@ from __future__ import annotations
 import io
 
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .compute import MovementResult, SheetResult, aggregated_views, row_values
-from .notes import NoteTable, build_notes
-from .notes_schema import NOTES_SCHEMA_VERSION, STATUS_ASSUMED, deviations
+from .notes import NoteTable, build_notes, build_statement_by_class
+from .notes_schema import (
+    NOTES_SCHEMA_VERSION,
+    REVISIONS,
+    STATUS_ASSUMED,
+    deviations,
+)
 from .schema import SCHEMA, SCHEMA_VERSION, Sheet
 
 # Subtotal resolution lives in compute (the note layer needs the same numbers, and the
@@ -112,7 +118,7 @@ def render_sama_workbook(
     # the per-class detail, matching how their workbook is laid out.
     for v in [x for x in views if x["level"] == "entity"]:
         _render_view(wb.create_sheet(_safe_sheet_name("Entity Total", used)), v, reporting_date)
-        for name, table in _notes_for_view(v).items():
+        for name, table in _notes_for_view(v, views).items():
             _render_note(wb.create_sheet(_safe_sheet_name(name, used)), 1, table, reporting_date)
 
     cohorts_by_class: dict[str, list] = {}
@@ -245,8 +251,10 @@ def _render_note(ws, r0: int, table: NoteTable, reporting_date: str | None) -> i
     cell would preview blank."""
     ws.column_dimensions["A"].width = 62
     columns = list(table.columns)
+    # get_column_letter, not chr(ord("B") + i): a class-columned statement (revision R3)
+    # has one column per reserving class and runs past Z on a large book.
     for i in range(len(columns)):
-        ws.column_dimensions[chr(ord("B") + i)].width = 20
+        ws.column_dimensions[get_column_letter(2 + i)].width = 20
 
     r = r0
     ws.cell(r, 1, table.title).font = _F["title"]
@@ -330,14 +338,28 @@ def _render_note(ws, r0: int, table: NoteTable, reporting_date: str | None) -> i
     return r
 
 
-def _notes_for_view(view: dict) -> dict[str, NoteTable]:
-    """The note tables a view carries. ``IS``/``BS`` are entity-level statements — a
-    per-class income statement would imply allocating general-ledger items that have no
-    class dimension (plan §11 Q5)."""
+#: Statements the client asked to see broken down by reserving class, Total on the left
+#: (revision R3). Rendered at the entity grain only — the class columns ARE the breakdown,
+#: so repeating them under each class sheet would say the same thing N times.
+BY_CLASS_NOTES: tuple[str, ...] = ("IS",)
+
+
+def _notes_for_view(view: dict, all_views: list[dict] | None = None) -> dict[str, NoteTable]:
+    """The note tables a view carries.
+
+    ``IS``/``BS`` are entity-level statements, so only the entity grain gets them; the two
+    additive note tables are also stacked under each class sheet. When the full view list
+    is supplied, the statements in ``BY_CLASS_NOTES`` are widened to carry one column per
+    reserving class (revision R3) instead of a lone Total.
+    """
     tables = build_notes(view)
-    if view.get("level") == "entity":
-        return {name: tables[name] for name in NOTE_TABS if name in tables}
-    return {name: tables[name] for name in STACKED_NOTES if name in tables}
+    if view.get("level") != "entity":
+        return {name: tables[name] for name in STACKED_NOTES if name in tables}
+    if all_views:
+        for name in BY_CLASS_NOTES:
+            if name in tables:
+                tables[name] = build_statement_by_class(all_views, name)
+    return {name: tables[name] for name in NOTE_TABS if name in tables}
 
 
 # ── machine-readable JSON companion (plan Q4: structured feed for preview/API) ──
@@ -350,7 +372,8 @@ def build_json_companion(
     with label/level/kind/sign and per-bucket values (subtotals resolved). Downstream/API
     consumers use this instead of cracking the xlsx."""
     out_views = []
-    for v in aggregated_views(result, levels=levels):
+    all_views = aggregated_views(result, levels=levels)
+    for v in all_views:
         sheets = {}
         for sname, sres in v["sheets"].items():
             sh = SCHEMA.sheets[sname]
@@ -382,7 +405,7 @@ def build_json_companion(
                     for ln in table.lines
                 ],
             }
-            for name, table in _notes_for_view(v).items()
+            for name, table in _notes_for_view(v, all_views).items()
         }
         out_views.append({
             "level": v["level"], "label": v["label"],
@@ -399,6 +422,14 @@ def build_json_companion(
             {"id": d.id, "note": d.note, "row": d.row, "client_cell": d.client_cell,
              "resolution": d.resolution, "evidence": d.evidence, "status": d.status}
             for d in deviations(STATUS_ASSUMED)
+        ],
+        # Changes the client asked for after signing off the template. Carried alongside
+        # the deviations so a reader can tell ours from theirs, and so the one reading we
+        # had to interpret (R2b's RI_Note!F15) is visible rather than buried in a diff.
+        "revisions": [
+            {"id": r.id, "note": r.note, "row": r.row, "op": r.op,
+             "request": r.request, "rationale": r.rationale}
+            for r in REVISIONS
         ],
         "views": out_views,
     }

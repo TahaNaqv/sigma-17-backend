@@ -174,7 +174,8 @@ def test_is_service_result_and_bs_balances_follow_the_notes():
     assert is_.value("insurance_service_result") == pytest.approx(
         is_.value("insurance_revenue")
         + is_.value("insurance_service_expenses")
-        + is_.value("net_expenses_from_reinsurance_contracts"),
+        + is_.value("expenses_from_reinsurance_contracts")
+        + is_.value("income_from_reinsurance_contracts"),
         abs=TOL,
     )
     assert bs.value("insurance_contract_liabilities") == pytest.approx(
@@ -262,3 +263,39 @@ def test_closing_gap_reports_lines_the_note_omits():
     # rebuild the roll-forward the same way compute would, with the extra line included
     view["sheets"]["Gross"].closing_rollforward["LRC_excl_LC"] += 250.0
     assert closing_gap(view)["Gross"] == pytest.approx(-250.0, abs=0.01)
+
+
+# ── statements by reserving class (client revision R3) ───────────────────────
+
+def test_statement_by_class_puts_total_first_and_one_column_per_class():
+    from module2_engine.movement.notes import build_statement_by_class
+
+    rows = [_row("MOTOR", 2023), _row("PROPERTY", 2023), _row("MARINE", 2024)]
+    views = _views(rows, levels=("entity", "class"))
+    table = build_statement_by_class(views, "IS")
+    assert table.columns[0] == "Total"
+    assert list(table.columns[1:]) == ["MARINE", "MOTOR", "PROPERTY"]
+
+
+def test_statement_by_class_total_equals_the_sum_of_the_class_columns():
+    """The notes are a linear combination of additive movement values, so a class
+    breakdown must re-sum to the entity total on every line — no allocation anywhere."""
+    from module2_engine.movement.notes import build_statement_by_class
+
+    rows = [_row("MOTOR", 2023), _row("PROPERTY", 2023), _row("MARINE", 2024)]
+    views = _views(rows, levels=("entity", "class"))
+    table = build_statement_by_class(views, "IS")
+    for line in table.lines:
+        if not line.values:
+            continue
+        total = line.values.get("Total") or 0.0
+        parts = sum((line.values.get(c) or 0.0) for c in table.columns[1:])
+        assert total == pytest.approx(parts, abs=TOL), line.label
+
+
+def test_statement_by_class_degrades_to_total_only_without_class_views():
+    from module2_engine.movement.notes import build_statement_by_class
+
+    views = _views([_row()], levels=("entity",))
+    table = build_statement_by_class(views, "IS")
+    assert table.columns == ("Total",)
