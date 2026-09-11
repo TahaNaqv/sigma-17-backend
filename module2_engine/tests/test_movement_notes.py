@@ -332,3 +332,37 @@ def test_statement_by_class_degrades_to_total_only_without_class_views():
     views = _views([_row()], levels=("entity",))
     table = build_statement_by_class(views, "IS")
     assert table.columns == ("Total",)
+
+
+def test_is_finance_line_is_negative_when_the_gross_finance_is_an_expense():
+    """Client, 2026-09-11: a finance *expense* must read negative on the statement. The
+    movement's finance source is a balance movement — positive raises the liability, i.e.
+    an expense — so the statement must end up negative for a positive source."""
+    col = "GROSS - Insurance Finance (Income)/Expense"
+    view = _views([_row(**{col: 9.0})], levels=("entity",))[0]
+    is_ = build_notes(view)["IS"]
+    assert is_.value("net_finance_expenses_from_insurance_contracts") == pytest.approx(
+        -9.0, abs=TOL
+    )
+    # and an income (negative source) reads positive
+    view = _views([_row(**{col: -9.0})], levels=("entity",))[0]
+    is_ = build_notes(view)["IS"]
+    assert is_.value("net_finance_expenses_from_insurance_contracts") == pytest.approx(
+        9.0, abs=TOL
+    )
+
+
+def test_balance_sheet_is_also_expanded_by_class():
+    """Client, 2026-09-11: 'same as IS, also expand BS with portfolio wise expansion'."""
+    from module2_engine.movement.notes import build_statement_by_class
+
+    rows = [_row("MOTOR", 2023), _row("PROPERTY", 2023)]
+    views = _views(rows, levels=("entity", "class"))
+    table = build_statement_by_class(views, "BS")
+    assert table.columns == ("Total", "MOTOR", "PROPERTY")
+    for line in table.lines:
+        if not line.values:
+            continue
+        total = line.values.get("Total") or 0.0
+        parts = sum((line.values.get(c) or 0.0) for c in table.columns[1:])
+        assert total == pytest.approx(parts, abs=TOL), line.label

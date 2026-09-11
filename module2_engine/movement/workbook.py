@@ -339,9 +339,10 @@ def _render_note(ws, r0: int, table: NoteTable, reporting_date: str | None) -> i
 
 
 #: Statements the client asked to see broken down by reserving class, Total on the left
-#: (revision R3). Rendered at the entity grain only — the class columns ARE the breakdown,
+#: (revision R3; BS added 2026-09-11 — "same as IS, also expand BS with portfolio wise
+#: expansion"). Rendered at the entity grain only — the class columns ARE the breakdown,
 #: so repeating them under each class sheet would say the same thing N times.
-BY_CLASS_NOTES: tuple[str, ...] = ("IS",)
+BY_CLASS_NOTES: tuple[str, ...] = ("IS", "BS")
 
 
 def _notes_for_view(view: dict, all_views: list[dict] | None = None) -> dict[str, NoteTable]:

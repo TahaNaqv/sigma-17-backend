@@ -181,13 +181,24 @@ def test_is_and_bs_read_the_note_totals():
 
 
 def test_is_statement_signs_follow_the_client_revision():
-    """R1/R2/R3 — the statement negates the expense-positive note/movement values it cites,
-    and takes the reinsurance income half unflipped."""
+    """R1/R2/R3 — the statement negates the expense-positive note values it cites, and
+    takes the reinsurance income half unflipped."""
     assert _line("IS", 5).columns["Total"].ref.factor == -1.0
     assert _line("IS", 6).columns["Total"].ref.factor == -1.0
     assert _line("IS", 7).columns["Total"].ref.factor == -1.0
     assert _line("IS", 8).columns["Total"].ref.factor == 1.0
-    assert _line("IS", 14).columns["Total"].terms[0].factor == -1.0
+
+
+def test_is_finance_lines_compose_with_the_movement_presentation():
+    """The two finance lines cite movement sheets that no longer share a convention, so
+    their factors differ and that asymmetry is the point:
+
+    * Gross row 57 is result-signed (schema.PL_PRESENTATION_NEGATED, revision R4), so the
+      statement takes it straight — negating again is what showed a finance *expense* as
+      positive (client, 2026-09-11).
+    * RI row 48 is still balance-signed, so the statement negates it.
+    """
+    assert _line("IS", 14).columns["Total"].terms[0].factor == 1.0
     assert _line("IS", 15).columns["Total"].terms[0].factor == -1.0
 
 

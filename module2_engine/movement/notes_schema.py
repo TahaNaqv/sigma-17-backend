@@ -206,10 +206,21 @@ REVISIONS: tuple[Revision, ...] = (
         note="IS",
         row=14,
         op="patch",
-        request="=-Gross!J57 (was =Gross!J57) — 'sign change'",
-        rationale="Statement sign convention, as R1; the movement term carries the factor.",
+        request=(
+            "=-Gross!J57 (was =Gross!J57) — 'sign change'; then 2026-09-11: 'can you check "
+            "its sign, it needs to be negative here'."
+        ),
+        rationale=(
+            "Factor +1, not the -1 the client's original formula implies, because the "
+            "movement sheet itself changed underneath it. R4 made the Gross finance block "
+            "result-signed (schema.PL_PRESENTATION_NEGATED), so Gross row 57 already "
+            "carries the sign this statement wants: a finance expense is negative there. "
+            "Negating a second time is what put +53,825,870.75 on the statement when the "
+            "client expected -53,825,870.75. The statement now takes the movement value "
+            "straight. R3b keeps its -1: RI was deliberately left balance-signed."
+        ),
         line={"sources": {"Total": {"kind": "movement", "terms": [
-            {"sheet": "Gross", "bucket": "Total", "row": 57, "factor": -1.0}]}}},
+            {"sheet": "Gross", "bucket": "Total", "row": 57, "factor": 1.0}]}}},
     ),
     Revision(
         id="R3b",
