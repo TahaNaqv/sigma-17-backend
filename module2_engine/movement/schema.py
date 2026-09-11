@@ -63,16 +63,48 @@ RECONSTRUCTED_FORMULAS: dict[str, dict[int, str]] = {
         47: "=C48+C52",           # change in ultimate + change in ULAE
         48: "=SUM(C49:C51)",      # paid + ΔOS + ΔIBNR (ULAE is row 52, alongside)
         54: "=C55",               # investment components = change in profit commission
-        57: "=SUM(C58:C59)",      # finance expense: P&L + OCI
+        57: "=SUM(C58:C59)",      # finance expense: P&L + OCI (both presented result-signed)
         61: "=SUM(C62:C63)",      # other movements = Item 1 + Item 2
         # Closing = opening + balance movement + cash flows. NOT ``C6+C64+C71``: row 64
         # ("Total changes in the statement of profit or loss and OCI") is a **P&L**
         # aggregate — it carries row 56 = revenue − expenses — and a P&L total is not a
         # balance movement. Insurance revenue *releases* the LRC, so it enters negative
         # here while row 64 adds it. See ROLLFORWARD_NEGATED_BLOCK below.
-        72: "=C6+(C31-C26+C57+C60+C61)+C71",
+        #
+        # ``−C57`` for the same reason: since the finance block is presented result-signed
+        # (PL_PRESENTATION_NEGATED), a finance *expense* shows negative, while it *raises*
+        # the liability. The balance takes it back the other way, so the closing is
+        # unchanged by that presentation flip.
+        72: "=C6+(C31-C26-C57+C60+C61)+C71",
     },
 }
+
+#: Per sheet, the input lines whose **presentation** is the P&L result sign while the data
+#: supplies a balance movement. They are rendered negated, and the balance roll-forward
+#: takes them back the other way — the mirror of ROLLFORWARD_NEGATED_BLOCK, which presents
+#: with the sheet's sign and negates only the balance.
+#:
+#: Gross row 64 ("Total changes in the statement of profit or loss and OCI") is
+#: ``C61+C60+C57+C56``, and row 56 is ``C26−C31`` — revenue minus expenses, a **result**.
+#: The finance block arrives from ``GROSS - Insurance Finance (Income)/Expense`` as a
+#: *balance* movement (ΔDiscounting Impact: a finance expense is positive because it raises
+#: the liability), so adding it to row 56 mixed the two conventions and row 64 came out
+#: wrong by twice the finance amount. Presented result-signed, the whole P&L block reads in
+#: one convention and row 64 becomes the exact mirror of the note's own total:
+#: ``Gross row 64 == −Gross_Note row 22`` — the tie-out the client used to report this
+#: (2026-09-11), and the control C2g that now guards it.
+#:
+#: RI is deliberately absent. Its result subtotal (row 47, ``D27−D21``) is already a
+#: *balance* movement — amounts recoverable raise the asset, the premium allocation
+#: consumes it — so row 55 mixes nothing, and the client's own unflattened closing
+#: (``D63 = D4+(D55−D62)``) depends on it staying that way.
+PL_PRESENTATION_NEGATED: dict[str, frozenset[str]] = {
+    "Gross": frozenset({
+        "insurance_finance_expenses_income_p_l",
+        "insurance_finance_expenses_income_oci",
+    }),
+}
+
 
 #: Per sheet, the subtotal whose input block enters the **balance** roll-forward negated.
 #:

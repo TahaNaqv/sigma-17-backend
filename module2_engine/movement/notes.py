@@ -214,8 +214,14 @@ _CONTROLS: tuple[tuple[str, str, str, str, int, float, str], ...] = (
      "Gross note service expenses == movement Insurance service expenses"),
     ("C2a", "Gross_Note", "insurance_revenue", "Gross", 26, -1.0,
      "Gross note revenue == negated movement Insurance revenue"),
-    ("C2b", "Gross_Note", "finance_expense_from_insurance_contracts", "Gross", 57, 1.0,
-     "Gross note finance == movement Insurance finance expenses/income"),
+    # -1.0 since 2026-09-11: the movement presents the finance block result-signed
+    # (schema.PL_PRESENTATION_NEGATED) while the note stays expense-positive.
+    ("C2b", "Gross_Note", "finance_expense_from_insurance_contracts", "Gross", 57, -1.0,
+     "Gross note finance == negated movement Insurance finance expenses/income"),
+    # The client's own tie-out for that change: the movement's P&L total is the mirror of
+    # the note's. Guards both halves at once — flip either sign and this breaches.
+    ("C2g", "Gross_Note", "total_changes_in_the_statement_of_income", "Gross", 64, -1.0,
+     "Gross note total changes == negated movement Total changes in P&L and OCI"),
     ("C2c", "Gross_Note", "total_cash_inflows_outflows", "Gross", 71, 1.0,
      "Gross note cash flows == movement Total Cash Flows"),
     ("C2d", "RI_Note", "amounts_recoverable_from_reinsurers_net", "RI", 27, 1.0,

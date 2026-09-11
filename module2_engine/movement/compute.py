@@ -31,6 +31,7 @@ import pandas as pd
 from .mapping import TIER_OVERRIDE, _load as _load_mapping
 from .schema import (
     CLOSING_CASHFLOW_SIGN,
+    PL_PRESENTATION_NEGATED,
     RECONSTRUCTED_FORMULAS,
     SCHEMA,
     Sheet,
@@ -292,11 +293,20 @@ def _build_sheet(sheet: Sheet, row: dict, columns: set[str], mapping, result: Mo
     # balance, so it enters the roll-forward negated. The line values themselves keep the
     # sheet's own sign — only the balance movement flips (schema.ROLLFORWARD_NEGATED_BLOCK).
     negated = negated_rollforward_rows(sheet.name)
+    # Lines presented with the P&L result sign while the mapping supplies a balance
+    # movement: the rendered value flips, and the balance takes it back (schema
+    # .PL_PRESENTATION_NEGATED). Applied before line_values is stored, so every consumer
+    # — sheet, note, JSON companion — sees one presented number.
+    presented_negated = PL_PRESENTATION_NEGATED.get(sheet.name, frozenset())
     pnl_total = {b: 0.0 for b in vbuckets}
     for ln in pnl:
         v = resolve_line(ln, "curr")
+        if ln.id in presented_negated:
+            v = {b: -x for b, x in v.items()}
+            direction = -1.0  # undo the presentation flip for the balance
+        else:
+            direction = -1.0 if ln.row in negated else 1.0
         line_values[ln.id] = v
-        direction = -1.0 if ln.row in negated else 1.0
         for b in vbuckets:
             pnl_total[b] += direction * v[b]
 

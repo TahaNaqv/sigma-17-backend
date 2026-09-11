@@ -82,14 +82,47 @@ def test_c1_note_service_expenses_ties_to_the_movement_subtotal():
     )
 
 
-def test_c2_revenue_is_the_negated_movement_revenue_and_finance_matches():
+def test_c2_revenue_and_finance_are_the_negated_movement_lines():
+    """Both blocks are presented one way on the movement sheet and the other in the note:
+    revenue is P&L-positive on the sheet but releases the liability; the finance block is
+    result-signed on the sheet (PL_PRESENTATION_NEGATED) but expense-positive in the note."""
     view = _entity()
     note = build_notes(view)["Gross_Note"]
     assert note.value("insurance_revenue") == pytest.approx(
         -_movement_total(view, "Gross", 26), abs=TOL
     )
     assert note.value("finance_expense_from_insurance_contracts") == pytest.approx(
-        _movement_total(view, "Gross", 57), abs=TOL
+        -_movement_total(view, "Gross", 57), abs=TOL
+    )
+
+
+def test_movement_pl_total_is_the_exact_mirror_of_the_note_total():
+    """The client's own tie-out (2026-09-11): movement row 64 == -(Gross_Note row 22).
+    Reported as the movement's 'Total changes in the statement of profit or loss and OCI'
+    being short by twice the finance amount."""
+    view = _entity()
+    note = build_notes(view)["Gross_Note"]
+    assert _movement_total(view, "Gross", 64) == pytest.approx(
+        -note.value("total_changes_in_the_statement_of_income"), abs=TOL
+    )
+
+
+def test_finance_is_presented_negated_but_moves_the_balance_the_other_way():
+    """The flip is presentation only. Raising the finance source by 5 must show as -5 more
+    on the line and +5 more on the balance — if the negation leaked into the roll-forward
+    the balance would move by -5 instead."""
+    col = "GROSS - Insurance Finance (Income)/Expense"
+    base = _views([_row(**{col: 5.0})], levels=("entity",))[0]["sheets"]["Gross"]
+    more = _views([_row(**{col: 10.0})], levels=("entity",))[0]["sheets"]["Gross"]
+
+    line = "insurance_finance_expenses_income_p_l"
+    assert base.line_values[line]["LIC_excl_RA"] == pytest.approx(-5.0, abs=TOL)
+    assert more.line_values[line]["LIC_excl_RA"] == pytest.approx(-10.0, abs=TOL)
+    assert more.closing_rollforward["LIC_excl_RA"] - base.closing_rollforward["LIC_excl_RA"] \
+        == pytest.approx(5.0, abs=TOL)
+    # the independently-built closing never saw the flip either
+    assert more.closing_independent["LIC_excl_RA"] == pytest.approx(
+        base.closing_independent["LIC_excl_RA"], abs=TOL
     )
 
 

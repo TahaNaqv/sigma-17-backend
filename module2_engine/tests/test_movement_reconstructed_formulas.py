@@ -142,8 +142,10 @@ def test_previously_zero_aggregates_now_carry_their_children():
     assert vals[32]["LRC_excl_LC"] == 7.0, "row 32 absorbs the acquisition row"
     assert vals[31]["LRC_excl_LC"] == 7.0, "insurance service expenses must see it"
 
-    assert vals[58]["LIC_excl_RA"] == 5.0
-    assert vals[57]["LIC_excl_RA"] == 5.0, "finance subtotal must sum P&L + OCI"
+    # -5.0, not 5.0: the finance block is presented result-signed since 2026-09-11
+    # (schema.PL_PRESENTATION_NEGATED); the balance still sees the original direction.
+    assert vals[58]["LIC_excl_RA"] == -5.0
+    assert vals[57]["LIC_excl_RA"] == -5.0, "finance subtotal must sum P&L + OCI"
 
 
 def test_closing_rollforward_adds_gross_cash_flows():

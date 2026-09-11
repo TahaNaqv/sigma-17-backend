@@ -174,6 +174,34 @@ REVISIONS: tuple[Revision, ...] = (
         line={"sources": {"Total": {"kind": "sum", "rows": [14, 15, 16, 10, 11, 12, 9]}}},
     ),
     Revision(
+        id="R4",
+        note="Gross_Note",
+        row=21,
+        op="patch",
+        request=(
+            "2026-09-11: the movement's 53M 'Insurance finance expenses/income' should be "
+            "negative, so 'Total changes in the statement of profit or loss and OCI' comes "
+            "to -1,702,792,926 — 'which you can compare in the Gross Note sheet, this "
+            "1702792926 is there'."
+        ),
+        rationale=(
+            "The client's tie-out is movement row 64 == -(Gross_Note row 22), and their "
+            "number confirms the note half was already right. The movement half is fixed by "
+            "presenting the finance block result-signed (schema.PL_PRESENTATION_NEGATED); "
+            "this term carries the factor -1 that takes the note back to the "
+            "expense-positive convention it already had, so the note is unchanged and the "
+            "two sheets become exact mirrors."
+        ),
+        line={"sources": {
+            **{bucket: {"kind": "movement", "terms": [
+                {"sheet": "Gross", "bucket": bucket, "row": 57, "factor": -1.0}]}
+               for bucket in ("LRC_excl_LC", "Loss_Component", "LIC_excl_RA",
+                              "Risk_Adjustment")},
+            "Total": {"kind": "row_total", "columns": [
+                "LRC_excl_LC", "Loss_Component", "LIC_excl_RA", "Risk_Adjustment"]},
+        }},
+    ),
+    Revision(
         id="R3a",
         note="IS",
         row=14,
