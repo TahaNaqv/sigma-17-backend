@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -974,6 +975,17 @@ class Module1SummaryJobView(APIView):
         })
         meta = _attach_large_claim_exclusion(request, meta)
         meta = _attach_class_aliases(request, meta)
+        # Reserving classes the user has asked to leave out of this run. Snapshotted onto the
+        # job like the aliases and the UPR policy, and for the same reason: an exclusion
+        # decides which business enters the reserve, so a re-run must apply the exclusions the
+        # run actually used rather than whatever is configured later.
+        excluded_classes = [
+            name.strip()
+            for name in (request.POST.get("excluded_classes") or "").split(",")
+            if name.strip()
+        ]
+        if excluded_classes:
+            meta["excluded_classes"] = excluded_classes
         job.input_meta = meta
         job.save(update_fields=["input_meta"])
 
@@ -2721,6 +2733,118 @@ class Module1UprImpactView(APIView):
 # ---------------------------------------------------------------------------
 
 
+def _grains_supporting_reported(os_frame, *, start, end, exclude=None) -> list[str]:
+    """Which other grains this outstanding extract could carry a reported triangle at.
+
+    Refusing is only half an answer. An extract valued at year-ends cannot support a quarterly
+    reported triangle, but it supports a yearly one perfectly well, and the user has no way to
+    discover that except by trying each button.
+    """
+    from core.grain import GRAIN_KEYS, get_grain
+    from module1_engine.triangles import valuation_coverage
+
+    out: list[str] = []
+    for key in GRAIN_KEYS:
+        candidate = get_grain(key)
+        if exclude is not None and candidate.key == exclude.key:
+            continue
+        coverage = valuation_coverage(os_frame, grain=candidate, start=start, end=end)
+        if coverage.usable:
+            out.append(candidate.label.lower())
+    return out
+
+
+def _earned_premium_payload(job: Module1Job, *, grain, reserving_class=None, treaty=None):
+    """Earned premium per accident period, or an explained absence.
+
+    Absence is the common case for now: premium is only archived for runs made after WP8.6, so
+    every earlier job answers with a reason instead. An empty panel with no explanation is the
+    failure mode this shape exists to prevent.
+
+    **Cached, because the premium workbook is the most expensive input the app reads.** Measured:
+    parsing the 0.9 MB reference premium file takes ~490 ms and computing monthly EP from it
+    another ~910 ms; the client's production premium file is **30.4 MB**, so the uncached path
+    is far outside the 2 s budget in §5 of the plan. The cached value is the small JSON payload
+    below — a few hundred floats — rather than the frame, which would put a large DataFrame in
+    every worker and fight `CELERY_WORKER_MAX_MEMORY_PER_CHILD` for memory.
+
+    A finished job's inputs are frozen, so the only correct invalidation is the job identity
+    itself; the TTL exists to bound memory, not to catch changes.
+    """
+    from django.core.cache import cache
+
+    from module1_engine.earned_premium import earned_premium_by_period
+
+    # Hashed, not concatenated: a reserving class is free text ("Motor Insurance", and worse
+    # elsewhere), and spaces or control characters in a cache key raise CacheKeyWarning today
+    # and break outright under memcached. The digest keeps the key opaque and fixed-width.
+    digest = hashlib.sha256(
+        "|".join([str(job.id), grain.key, reserving_class or "", treaty or ""]).encode()
+    ).hexdigest()[:32]
+    cache_key = f"m1.ep.{digest}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    meta = job.input_meta or {}
+    def _remember(payload):
+        cache.set(cache_key, payload, getattr(settings, "MODULE1_TRIANGLE_CACHE_SECONDS", 900))
+        return payload
+
+    frame = _premium_source_frame(job)
+    if frame is None or getattr(frame, "empty", True):
+        return _remember({
+            "available": False,
+            "reason": (
+                "Premium was not retained for this run. Earned premium can be shown for runs "
+                "made after premium archiving was enabled."
+            ),
+        })
+
+    # The run's own UPR policy, resolved by the same helper the task uses — EP depends on the
+    # earning method, so a different resolution here would be a different earned premium.
+    from processing.tasks import _load_upr_policy
+
+    raw_policy = meta.get("upr_policy") or {}
+    policy = _load_upr_policy(job)
+
+    try:
+        # The EXPERIENCE period, not bop/eop: this vector sits beside a triangle drawn over
+        # the experience axis, and an EP that spanned a different window could not be read
+        # against it. The workbook's own EP column zero-fills outside bop/eop, so the two can
+        # differ at the edges — named in `window` rather than hidden.
+        ep = earned_premium_by_period(
+            frame, grain=grain,
+            bop=meta.get("exp_start") or meta.get("bop"),
+            eop=meta.get("exp_end") or meta.get("eop"),
+            upr_policy=policy,
+        )
+    except (KeyError, ValueError) as exc:
+        return _remember(
+            {"available": False, "reason": f"Earned premium could not be computed: {exc}"}
+        )
+
+    if reserving_class:
+        ep = ep[ep["RESERVINGCLASS"].astype(str) == reserving_class]
+    if treaty in ("GROSS", "RI"):
+        ep = ep[ep["RI_TREATY_TYPE"] == treaty]
+
+    by_period = ep.groupby("period", sort=False)["ep"].sum()
+    return _remember({
+        "available": True,
+        # The basis is named because two earned premiums are conceivable and only one is
+        # booked; see module1_engine/earned_premium.py.
+        "basis": "UPR movement (GWP − closing UPR + opening UPR), as booked",
+        "upr_policy": (raw_policy or {}).get("name") if raw_policy else None,
+        "window": {
+            "start": meta.get("exp_start") or meta.get("bop"),
+            "end": meta.get("exp_end") or meta.get("eop"),
+        },
+        "labels": list(by_period.index),
+        "ep": [float(v) for v in by_period.to_numpy()],
+    })
+
+
 class Module1TrianglesView(APIView):
     """GET /api/module1/jobs/{pk}/triangles/?grain=monthly&reserving_class=...
 
@@ -2744,7 +2868,12 @@ class Module1TrianglesView(APIView):
 
     def get(self, request, pk):
         from core.grain import DEFAULT_GRAIN, GRAIN_KEYS, get_grain
-        from module1_engine.triangles import build_triangle, implied_cdf_from_finer_grain
+        from module1_engine.triangles import (
+            BASIS_PAID,
+            BASIS_REPORTED,
+            build_triangle,
+            implied_cdf_from_finer_grain,
+        )
 
         job = _get_accessible_job(request, pk)
         if job.job_type != Module1Job.JobType.SUMMARY:
@@ -2785,17 +2914,72 @@ class Module1TrianglesView(APIView):
 
         rc = (request.query_params.get("reserving_class") or "").strip()
         treaty = (request.query_params.get("treaty") or "").strip().upper()
-        if rc:
-            paid = paid[paid["RESERVINGCLASS"].astype(str) == rc]
-        if treaty in ("GROSS", "RI"):
-            paid = paid[paid["RI_TREATY_TYPE"].astype(str).str.upper() == treaty]
+        # Head of damage completes the workbook's own slicing key. Without it no page view
+        # corresponds to exactly one reserve workbook, which is the only way a user can check
+        # the page against a booked number.
+        hod = (request.query_params.get("head_of_damage") or "").strip()
+        available_hods = sorted(
+            {str(v) for v in paid["HEADOFDAMAGE"].dropna().unique()}
+        ) if "HEADOFDAMAGE" in paid.columns else []
+
+        def _slice(frame):
+            if frame is None or frame.empty:
+                return frame
+            if rc and "RESERVINGCLASS" in frame.columns:
+                frame = frame[frame["RESERVINGCLASS"].astype(str) == rc]
+            if treaty in ("GROSS", "RI") and "RI_TREATY_TYPE" in frame.columns:
+                frame = frame[frame["RI_TREATY_TYPE"].astype(str).str.upper() == treaty]
+            if hod and "HEADOFDAMAGE" in frame.columns:
+                frame = frame[frame["HEADOFDAMAGE"].astype(str) == hod]
+            return frame
+
+        paid = _slice(paid)
+
+        basis = (request.query_params.get("basis") or BASIS_PAID).strip().lower()
+        if basis not in (BASIS_PAID, BASIS_REPORTED):
+            raise ValidationError(
+                {"basis": f"Must be '{BASIS_PAID}' or '{BASIS_REPORTED}'."}
+            )
+        include = {
+            part.strip()
+            for part in (request.query_params.get("include") or "").split(",")
+            if part.strip()
+        }
+
+        os_frame = _slice(_os_source_frame(job)) if basis == BASIS_REPORTED else None
 
         excluded = [
             c for c in (request.query_params.get("excluded_claims") or "").split(",") if c
         ]
         triangle = build_triangle(
-            paid, grain=grain, start=start, end=end, excluded_claims=excluded or None
+            paid, grain=grain, start=start, end=end, excluded_claims=excluded or None,
+            basis=basis, os_frame=os_frame,
         )
+
+        # Refuse the reported basis the data cannot carry, with the reason. Returning a
+        # triangle of nulls would look like a rendering bug; returning paid figures under a
+        # "reported" label would be worse.
+        if basis == BASIS_REPORTED and triangle.coverage is not None:
+            coverage = triangle.coverage
+            if not coverage.usable:
+                # The error envelope carries strings, so the message has to be self-contained:
+                # what the extract holds, and — the useful half — which grain it WOULD support.
+                # `include=coverage` returns the structured form for a banner.
+                dates = ", ".join(coverage.valuation_periods) or "none"
+                detail = (
+                    " ".join(coverage.warnings)
+                    or "This job's outstanding data cannot support a reported triangle."
+                ) + f" Valuation dates found: {dates}."
+                workable = _grains_supporting_reported(
+                    os_frame, start=start, end=end, exclude=grain
+                )
+                if workable:
+                    detail += (
+                        " The reported triangle is available at "
+                        + " and ".join(workable)
+                        + "."
+                    )
+                raise ValidationError({"basis": detail})
         payload = {
             "job_id": str(job.id),
             "grains": list(GRAIN_KEYS),
@@ -2808,7 +2992,18 @@ class Module1TrianglesView(APIView):
             # disagree with what the triangle was built from.
             "reserving_classes": available_classes,
             "treaties": available_treaties,
+            "heads_of_damage": available_hods,
+            "basis": basis,
+            "head_of_damage": hod or None,
         }
+        if triangle.coverage is not None or "coverage" in include:
+            payload["coverage"] = (
+                triangle.coverage.to_dict() if triangle.coverage is not None else None
+            )
+        if "ep" in include:
+            payload["earned_premium"] = _earned_premium_payload(
+                job, grain=grain, reserving_class=rc or None, treaty=treaty or None
+            )
 
         if request.query_params.get("imply_cdf") in ("1", "true", "yes"):
             if grain is DEFAULT_GRAIN:
@@ -2829,6 +3024,64 @@ class Module1TrianglesView(APIView):
             payload["implied"] = implied.to_dict()
 
         return Response(payload)
+
+
+def _premium_source_frame(job: Module1Job):
+    """The premium frame a Summary job consumed.
+
+    The same three-tier cascade as the claims loaders, but a different reader: premium is
+    loaded by `engine.preprocess_data`, not `import_data`, so it cannot share
+    `_frame_from_input_archive`.
+
+    Returns None when the run predates premium archiving (`MODULE1_ARCHIVE_PREMIUM`, WP8.6) —
+    which is every job made before it shipped. The caller reports that as an explained absence
+    rather than an empty earned-premium panel.
+    """
+    import tempfile
+    import zipfile
+    from pathlib import Path as _Path
+
+    import pandas as pd
+
+    from module1_engine.engine import preprocess_data
+    from processing.tasks import INPUT_ARCHIVE_PREMIUM_PREFIX
+
+    snap_ids = (job.input_meta or {}).get("dataset_snapshots", {}).get("premium")
+    if snap_ids:
+        frames = [
+            pd.DataFrame(s.rows_payload)
+            for s in DatasetSnapshot.objects.filter(
+                id__in=snap_ids, organization=job.organization
+            )
+            if s.rows_payload
+        ]
+        if frames:
+            from datasets.services.columns import DB_TO_EXCEL_FOR_KIND
+
+            return pd.concat(frames, ignore_index=True).rename(
+                columns=DB_TO_EXCEL_FOR_KIND[Dataset.Kind.PREMIUM]
+            )
+
+    if job.input_archive:
+        try:
+            with job.input_archive.open("rb") as fh:
+                archive = zipfile.ZipFile(io.BytesIO(fh.read()))
+            names = [
+                n for n in archive.namelist()
+                if n.startswith(INPUT_ARCHIVE_PREMIUM_PREFIX) and n.endswith(".xlsx")
+            ]
+            if names:
+                with tempfile.TemporaryDirectory() as tmp:
+                    for name in names:
+                        (_Path(tmp) / _Path(name).name).write_bytes(archive.read(name))
+                    return preprocess_data(tmp)
+        except (OSError, ValueError, zipfile.BadZipFile):
+            pass
+
+    folder = job_input_subdir(job, "premium")
+    if folder.is_dir() and any(folder.glob("*.xlsx")):
+        return preprocess_data(str(folder))
+    return None
 
 
 def _frame_from_input_archive(job: Module1Job, prefix: str, amount_column: str, *, is_os: bool):

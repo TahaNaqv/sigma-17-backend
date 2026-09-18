@@ -10,7 +10,7 @@ import os
 import re
 from openpyxl import load_workbook
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 import numpy as np
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -23,6 +23,7 @@ from core.grain import DEFAULT_GRAIN
 from core.profiling import stage_timer
 from module1_engine.averages import age_to_age_matrix, benchmark_rows
 from module1_engine.large_claims import ExclusionPlan
+from module1_engine.method_notes import RESERVE_METHODS as _RESERVE_METHODS, notes_for_row
 from module1_engine.upr_methods import UprPolicy, unearned_fraction
 
 logger = logging.getLogger(__name__)
@@ -33,17 +34,24 @@ def select_experience_period(start_period_str, end_period_str):
     end_period = pd.to_datetime(end_period_str, format='%d-%m-%Y')
     return start_period, end_period
 
+#: Heads of damage whose amount is a recovery rather than a payment. Hoisted out of
+#: `import_data` so the preflight check that reports recovery rows the substitution WILL NOT
+#: reach reads the same list the substitution itself does — two copies would drift, and the
+#: drift would be invisible until a book lost its recoveries.
+RECOVERY_CATEGORIES = [
+    "TP - Morror Recovery", "TP - Insurance Recovery(RASEED)", "TP - Right of Recovery","Right of Recovery","Salvage","Recovery",
+    "OD - Salvage / Scrap", "OD – Right of Recovery", "OD - Salvage / Client", "OD - Reversal of Total Loss","Subrogation",
+    "Rental OD - Right of Recovery","OD - Others"
+]
+
+
 def import_data(folder_path, amount_column_name, is_os=False):
     excel_files = glob.glob(os.path.join(folder_path, '*.xlsx'))
     if not excel_files:
         print("Warning: No Excel files found.")
         return None
-    
-    recovery_categories = [
-        "TP - Morror Recovery", "TP - Insurance Recovery(RASEED)", "TP - Right of Recovery","Right of Recovery","Salvage","Recovery",
-        "OD - Salvage / Scrap", "OD – Right of Recovery", "OD - Salvage / Client", "OD - Reversal of Total Loss","Subrogation",
-        "Rental OD - Right of Recovery","OD - Others"
-    ]
+
+    recovery_categories = RECOVERY_CATEGORIES
 
     data_list = []
     for file in excel_files:
@@ -127,35 +135,6 @@ def preprocess_dates(df):
     df['POLICYENDDATE'] = pd.to_datetime(df['POLICYENDDATE'], errors='coerce')
     
     return df
-
-def calculate_quarterly_premium(df, start_period, end_period):
-    quarters = DEFAULT_GRAIN.date_range(start_period, end_period)
-    result = []
-
-    for current_quarter in quarters:
-        quarter_start = current_quarter.to_period(DEFAULT_GRAIN.period_alias).start_time
-        quarter_end = quarter_start + pd.offsets.QuarterEnd(1)
-        reserving_class_earned_premium = {}
-
-        for reserving_class in df['RESERVINGCLASS'].unique():
-            mask = (df['RESERVINGCLASS'] == reserving_class) & (df['RiskEndDate'] >= quarter_start) & (df['RiskStartDate'] <= quarter_end)
-            temp_df = df[mask].copy()
-            temp_df['Adjusted Start'] = temp_df['RiskStartDate'].clip(lower=quarter_start)
-            temp_df['Adjusted End'] = temp_df['RiskEndDate'].clip(upper=quarter_end)
-            temp_df['Days Active'] = (temp_df['Adjusted End'] - temp_df['Adjusted Start']).dt.days + 1
-            temp_df['Total Policy Days'] = (temp_df['RiskEndDate'] - temp_df['RiskStartDate']).dt.days + 1
-            temp_df['Total Policy Days'] = temp_df['Total Policy Days'].replace(0, np.nan)
-            temp_df['PREMIUMAMOUNT'] = pd.to_numeric(temp_df['PREMIUMAMOUNT'], errors='coerce')
-            temp_df['Quarterly Premium'] = (temp_df['Days Active'] / temp_df['Total Policy Days']).fillna(0) * temp_df['PREMIUMAMOUNT']
-            total_earned_premium = temp_df['Quarterly Premium'].sum()
-            reserving_class_earned_premium[reserving_class] = total_earned_premium
-
-        result.append({
-            'Accident_Period': DEFAULT_GRAIN.label_for(current_quarter),
-            **reserving_class_earned_premium,
-        })
-
-    return pd.DataFrame(result)
 
 def get_quarter_end_dates(bop, eop):
     """Booking-period end dates. DEFAULT_GRAIN is quarterly, so this is unchanged; the
@@ -526,15 +505,6 @@ def calculate_claims_os_summary(df, end_period):
     
     return claims_os_summary, lic_os_summary
 
-def export_upr_summary_to_excel(summary_df, file_path):
-    summary_df.to_excel(file_path, index=False, sheet_name='UPR Summary')
-
-def export_claims_paid_summary_to_excel(summary_claims_paid_df, file_path):
-    summary_claims_paid_df.to_excel(file_path, index=False, sheet_name='Claims Paid Summary')    
-
-def export_claims_os_summary_to_excel(summary_claims_os_df, file_path):
-    summary_claims_os_df.to_excel(file_path, index=False, sheet_name='Claims OS Summary') 
-    
 def calculate_incremental_triangle(df, start_period, end_period, is_os=False):
     # NOTE: kept as the original row-by-row loop. A vectorised groupby version was
     # attempted (plan §1.2) but changed the int/float dtype pattern of the triangle,
@@ -709,7 +679,37 @@ def write_selected_rows(ws, cumulative_df, selected_ldf_row: int) -> None:
 
 # The five Selected-Method options (must match the Excel data-validation list
 # and the Ultimate Claims IF() formula branches below).
-RESERVE_METHODS = ("Paid CL", "Reported CL", "ELR", "Paid BF", "Reported BF")
+#: Re-exported from `method_notes`, which owns the vocabulary because it is also mirrored in
+#: the browser. Two copies would drift the moment a method were added.
+RESERVE_METHODS = _RESERVE_METHODS
+
+
+def drop_reserving_classes(frame, excluded=None):
+    """Remove whole reserving classes from a frame, after aliasing.
+
+    A class can carry premium and no claims at all — the client's Health Insurance has 13,370
+    premium rows and nothing in either claims file, because that experience is simply not
+    supplied. Left in, it earns premium into the LRC, reports a zero loss ratio, and produces a
+    zero ultimate under every method: one side of a balance sheet with nothing on the other.
+    Preflight already reports it; this is the instruction to leave it out of the run entirely.
+
+    Applied AFTER `apply_class_aliases` so an exclusion is written in canonical terms — the
+    name the user sees in the output, not whichever spelling a particular file happens to use.
+
+    `None` or an empty collection leaves the frame untouched, which is what keeps every
+    existing golden bit-identical.
+    """
+    if frame is None or not excluded:
+        return frame
+    if "RESERVINGCLASS" not in getattr(frame, "columns", []):
+        return frame
+    # Matched on the canonical key, like aliasing, so an exclusion absorbs case and
+    # punctuation differences rather than depending on an exact spelling.
+    drop = {canonical_key(name) for name in excluded}
+    keep = ~frame["RESERVINGCLASS"].astype(str).map(canonical_key).isin(drop)
+    if keep.all():
+        return frame
+    return frame[keep]
 
 
 def apply_class_aliases(frame, aliases: dict[str, str] | None):
@@ -895,7 +895,12 @@ def run_update_reserve_summary(
                 new_headers = [
                     'Implied LR', 'Paid CDF', 'Reported CDF', 'Paid CL Ultimate',
                     'Reported CL Ultimate', 'ELR Ultimate', 'Paid BF Ultimate', 'Reported BF Ultimate',
-                    'Selected Method', 'Ultimate Claims', 'IBNR', 'ULR', 'CDF'
+                    'Selected Method', 'Ultimate Claims', 'IBNR', 'ULR', 'CDF',
+                    # Appended LAST so no formula above it moves. Actuaries work offline in
+                    # Excel, so the caveat has to travel with the workbook: a BF whose CDF is
+                    # 1.00 and whose Implied LR is blank returns reported claims unchanged, and
+                    # nothing else on the sheet says so. See module1_engine/method_notes.py.
+                    'Method Note',
                 ]
                 existing_headers = [
                     ws.cell(row=1, column=col).value
@@ -975,6 +980,26 @@ def run_update_reserve_summary(
                         if method in RESERVE_METHODS:
                             data['Selected Method'] = method
 
+                    # Computed AFTER the overrides, because the note is about the values the
+                    # row will actually carry. Everything it reads is a literal at this point:
+                    # the CDFs come from the Selected CDF rows, Implied LR and Selected Method
+                    # from the override, and the claim/EP columns from the sheet. The ultimate
+                    # is recomputed here rather than read, because L-S are live formulas whose
+                    # values Excel has not evaluated yet.
+                    notes = notes_for_row(
+                        data.get('Selected Method'),
+                        paid_cdf=_as_float(data.get('Paid CDF')) or 1.0,
+                        reported_cdf=_as_float(data.get('Reported CDF')) or 1.0,
+                        implied_lr=data.get('Implied LR'),
+                        ep=_as_float(data.get('EP')),
+                        paid_claims=_as_float(data.get('Paid Claims')),
+                        os_claims=_as_float(data.get('OS Claims')),
+                        reported_claims=_as_float(data.get('Reported Claims')),
+                        large_paid=large_paid,
+                        large_incurred=large_incurred,
+                    )
+                    data['Method Note'] = " ".join(n.text for n in notes) or None
+
                     reserving_class_data.append(data)
 
                     # Write updated values back to worksheet
@@ -1000,8 +1025,17 @@ def run_update_reserve_summary(
 
                 # Format columns  (named `sheet_col` so it cannot shadow the `col`
                 # header->letter map the formulas and data validation above depend on)
+                note_letter = col['Method Note']
                 for sheet_col in ws.columns:
-                    ws.column_dimensions[sheet_col[0].column_letter].width = 15.22
+                    letter = sheet_col[0].column_letter
+                    if letter == note_letter:
+                        # Prose, not money: the accounting format would hide it behind ####
+                        # and a 15-char column would make it unreadable.
+                        ws.column_dimensions[letter].width = 60
+                        for cell in sheet_col:
+                            cell.alignment = Alignment(wrap_text=True, vertical="top")
+                        continue
+                    ws.column_dimensions[letter].width = 15.22
                     for cell in sheet_col:
                         cell.number_format = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-'
 
@@ -1115,6 +1149,7 @@ def run_generate_summary(
     exclusion: ExclusionPlan | None = None,
     run_report: dict | None = None,
     class_aliases: dict[str, str] | None = None,
+    excluded_classes=None,
 ) -> None:
     """``run_report``, when given, is filled with facts the caller should persist.
 
@@ -1135,11 +1170,10 @@ def run_generate_summary(
     with stage_timer("m1.premium_load"):
         df = preprocess_data(premium_data_folder)
         df = apply_class_aliases(df, class_aliases)
+        df = drop_reserving_classes(df, excluded_classes)
     if df is None:
         raise ValueError("No valid data found in the premium data folder.")
 
-    with stage_timer("m1.quarterly_premium"):
-        summary_df = calculate_quarterly_premium(df, bop, eop)
     with stage_timer("m1.calculate_upr"):
         df = calculate_upr(df, bop=bop, eop=eop, upr_policy=upr_policy)
     with stage_timer("m1.summarize_upr_by_reserving_class"):
@@ -1150,6 +1184,7 @@ def run_generate_summary(
     with stage_timer("m1.claims_load_paid"):
         paid_data = import_data(claims_paid_folder, "AMOUNTPAID", is_os=False)
         paid_data = apply_class_aliases(paid_data, class_aliases)
+        paid_data = drop_reserving_classes(paid_data, excluded_classes)
     if paid_data is None or "PAYMENTDATE" not in paid_data.columns:
         raise ValueError("No valid 'PAYMENTDATE' found in the data.")
     claims_paid_summary_df = calculate_claims_paid_summary(paid_data, bop, eop)
@@ -1157,6 +1192,7 @@ def run_generate_summary(
     with stage_timer("m1.claims_load_os"):
         os_data = import_data(claims_os_folder, "AMOUNTOUTSTANDING", is_os=True)
         os_data = apply_class_aliases(os_data, class_aliases)
+        os_data = drop_reserving_classes(os_data, excluded_classes)
     if os_data is None or "As at" not in os_data.columns:
         raise ValueError("No valid 'As at' found in the data.")
     claims_os_summary_df, lic_os_summary = calculate_claims_os_summary(os_data, eop)

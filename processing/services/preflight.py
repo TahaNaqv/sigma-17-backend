@@ -143,6 +143,40 @@ def _count_by_class(frame: pd.DataFrame | None) -> dict[str, int]:
     return {str(k): int(v) for k, v in counts.items()}
 
 
+def _stranded_recoveries(claims_paid: pd.DataFrame | None) -> dict[str, Any] | None:
+    """Recovery rows the engine's amount substitution will drop, found from the data.
+
+    Returns None when there is nothing to report, so the caller stays quiet on a healthy book.
+    """
+    from module1_engine.engine import RECOVERY_CATEGORIES
+
+    if claims_paid is None or claims_paid.empty:
+        return None
+    needed = {"HEADOFDAMAGE", "AMOUNTPAID", "AMOUNTRECOVERED", "POLICYCLASS"}
+    if not needed.issubset(claims_paid.columns):
+        return None
+
+    recovered = pd.to_numeric(claims_paid["AMOUNTRECOVERED"], errors="coerce")
+    rows = claims_paid[
+        claims_paid["HEADOFDAMAGE"].isin(RECOVERY_CATEGORIES)
+        & claims_paid["AMOUNTPAID"].isna()
+        # Only rows carrying MONEY. On the reference book 1,633 of 1,645 matching rows have a
+        # recovered amount of zero and lose nothing by being dropped; reporting those would
+        # bury the twelve that do matter under a number nobody would act on.
+        & recovered.notna()
+        & (recovered != 0)
+        & (claims_paid["POLICYCLASS"].astype(str) != "Motor")
+    ]
+    if rows.empty:
+        return None
+    return {
+        "rows": int(len(rows)),
+        "amount": float(pd.to_numeric(rows["AMOUNTRECOVERED"], errors="coerce").sum()),
+        "policy_classes": {str(v) for v in rows["POLICYCLASS"].dropna().unique()},
+        "heads": {str(v) for v in rows["HEADOFDAMAGE"].dropna().unique()},
+    }
+
+
 def build_preflight_report(
     premium: pd.DataFrame | None,
     claims_paid: pd.DataFrame | None,
@@ -287,6 +321,42 @@ def build_preflight_report(
                     f"paid triangle."
                 ),
                 detail={"class": label},
+            )
+        )
+
+    # --- recoveries the reader will silently drop -----------------------------------------
+    #
+    # `import_data` substitutes AMOUNTRECOVERED for AMOUNTPAID only where POLICYCLASS is
+    # exactly "Motor". A book that spells that column "Motor Insurance" therefore loses every
+    # recovery row: measured on the 2016-2017 reference set, 483 salvage rows with a fully
+    # populated AMOUNTRECOVERED contribute nothing to any triangle. Nothing normalises
+    # POLICYCLASS the way `class_aliases` normalises RESERVINGCLASS, so the behaviour turns on
+    # a spelling.
+    #
+    # Detected from the data rather than from the spelling: a row whose head of damage is a
+    # recovery category, whose paid amount is empty and whose recovered amount is populated, is
+    # self-evidently a recovery the triangle will not see. Reported, not silently corrected —
+    # whether recoveries belong in the paid triangle is the client's call, and changing it
+    # moves booked numbers.
+    stranded = _stranded_recoveries(claims_paid)
+    if stranded:
+        spellings = ", ".join(sorted(stranded["policy_classes"])) or "unknown"
+        messages.append(
+            PreflightMessage(
+                code="recoveries_not_substituted",
+                severity=SEVERITY_WARN,
+                text=(
+                    f"{stranded['rows']:,} recovery rows worth {stranded['amount']:,.0f} carry "
+                    f"a recovered amount but no paid amount, and will contribute nothing to any "
+                    f"triangle. The recovery substitution only applies where POLICYCLASS is "
+                    f"exactly 'Motor'; these rows read '{spellings}'."
+                ),
+                detail={
+                    "rows": stranded["rows"],
+                    "amount": stranded["amount"],
+                    "policy_classes": sorted(stranded["policy_classes"]),
+                    "heads_of_damage": sorted(stranded["heads"]),
+                },
             )
         )
 

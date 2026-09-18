@@ -215,6 +215,17 @@ MODULE1_OUTPUT_PREVIEW_MAX_CELLS = env.int(
     'MODULE1_OUTPUT_PREVIEW_MAX_CELLS',
     default=20000,
 )
+# Keep a summary run's premium workbook in its durable input archive, so the triangle view can
+# show earned premium at any grain afterwards. On the reference production book premium is
+# 30.4 MB against 7.1 MB of claims, so this is roughly a fivefold increase in archived bytes
+# per job. Turn it off to trade the feature for the storage: the triangle view then reports
+# earned premium as unavailable, with the reason, exactly as it does for older jobs.
+MODULE1_ARCHIVE_PREMIUM = env.bool('MODULE1_ARCHIVE_PREMIUM', default=True)
+# How long the triangle view keeps a job's computed earned premium. A finished job's inputs are
+# frozen, so this bounds memory rather than catching changes. Measured: parsing the reference
+# premium workbook costs ~490 ms and monthly EP another ~910 ms, against a 30.4 MB premium file
+# in production — so the first request pays and the rest do not.
+MODULE1_TRIANGLE_CACHE_SECONDS = env.int('MODULE1_TRIANGLE_CACHE_SECONDS', default=900)
 
 # Django REST Framework
 REST_FRAMEWORK = {

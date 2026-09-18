@@ -22,11 +22,16 @@ from module1_engine.engine import run_update_reserve_summary
 BASE_HEADERS = [
     "Accident_Period", "EP", "Paid Claims", "OS Claims", "Reported Claims", "Reported LR",
 ]
+#: The historic appended block, in order. Its column LETTERS are what every formula on the
+#: sheet addresses, so this list is the thing under protection: nothing may be inserted into
+#: it or before it. Columns added after it are fine and are asserted separately.
 APPENDED = [
     "Implied LR", "Paid CDF", "Reported CDF", "Paid CL Ultimate", "Reported CL Ultimate",
     "ELR Ultimate", "Paid BF Ultimate", "Reported BF Ultimate", "Selected Method",
     "Ultimate Claims", "IBNR", "ULR", "CDF",
 ]
+#: Added later, always last. See module1_engine/method_notes.py.
+TRAILING = ["Method Note"]
 
 #: Exactly what the engine produced before the letters were made positional.
 HISTORIC_ROW_2 = {
@@ -105,7 +110,10 @@ def test_the_appended_block_starts_where_it_always_did(tmp_path):
     ws = wb["Reserve Summary"]
     headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
     assert headers[: len(BASE_HEADERS)] == BASE_HEADERS
-    assert headers[len(BASE_HEADERS):] == APPENDED
+    # The historic thirteen keep their positions, and therefore their letters.
+    assert headers[len(BASE_HEADERS): len(BASE_HEADERS) + len(APPENDED)] == APPENDED
+    # Anything added since sits strictly after them, where it moves no formula.
+    assert headers[len(BASE_HEADERS) + len(APPENDED):] == TRAILING
     assert get_column_letter(len(BASE_HEADERS) + 1) == "G"
 
 

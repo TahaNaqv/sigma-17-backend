@@ -211,3 +211,181 @@ class TriangleFilterVocabularyTests(TestCase):
             grain="quarterly", reserving_class="Motor Insurance"
         ).json()["reserving_classes"]
         self.assertEqual(unfiltered, filtered)
+
+
+OS_DIR = (
+    __import__("pathlib").Path(__file__).resolve().parents[2]
+    / "benchmarks" / "fixtures" / "summary_ref" / "claims_os"
+)
+PREMIUM_DIR = (
+    __import__("pathlib").Path(__file__).resolve().parents[2]
+    / "benchmarks" / "fixtures" / "summary_ref" / "premium"
+)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class TrianglesBasisAndExposureTests(TrianglesApiTests):
+    """WP8.4 — the reported basis, the head-of-damage filter, and earned premium.
+
+    The reference extract is `diagonal` (every valuation lists only that period's own claims),
+    so it is the case where the reported basis must be REFUSED with a reason. That is the
+    behaviour worth pinning hardest: returning paid figures under a "reported" label, or a
+    triangle of nulls that looks like a rendering fault, are both worse than a clear 400.
+    """
+
+    def _job(self):
+        job = super()._job()
+        from processing.utils import job_input_subdir
+
+        for folder, kind in ((OS_DIR, "claims_os"), (PREMIUM_DIR, "premium")):
+            if not folder.is_dir():
+                continue
+            dest = job_input_subdir(job, kind)
+            for f in folder.glob("*.xlsx"):
+                shutil.copy(f, dest / f.name)
+        return job
+
+    def test_the_paid_basis_is_the_default_and_is_unchanged(self):
+        resp = self._get(grain="quarterly")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["basis"], "paid")
+        self.assertIsNone(resp.data.get("coverage"))
+
+    def test_an_unknown_basis_is_rejected(self):
+        resp = self._get(grain="quarterly", basis="incurred")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("basis", resp.data["fieldErrors"])
+
+    def test_the_reported_basis_is_refused_with_the_reason_on_this_extract(self):
+        resp = self._get(grain="quarterly", basis="reported")
+        self.assertEqual(resp.status_code, 400, resp.data)
+        detail = str(resp.data["fieldErrors"]["basis"])
+        self.assertIn("only the claims that occurred in that same period", detail)
+        self.assertIn("full open-claim inventory", detail)
+
+    def test_the_refusal_names_the_valuation_dates_it_found(self):
+        """The message must stand alone: the error envelope carries strings, so a client
+        showing only the detail still learns what the extract holds."""
+        detail = str(
+            self._get(grain="quarterly", basis="reported").data["fieldErrors"]["basis"]
+        )
+        self.assertIn("2017-Q1, 2017-Q2, 2017-Q3, 2017-Q4", detail)
+
+    def test_the_head_of_damage_filter_narrows_the_triangle(self):
+        everything = self._get(grain="quarterly").data
+        self.assertIn("Payment", everything["heads_of_damage"])
+        narrowed = self._get(grain="quarterly", head_of_damage="Payment").data
+        self.assertEqual(narrowed["head_of_damage"], "Payment")
+        # Claim COUNT, not money: on this book the Salvage rows carry no usable amount at all
+        # (see F7 — the recovery substitution never fires), so excluding them moves the count
+        # without moving a penny.
+        self.assertLess(
+            narrowed["triangle"]["credibility"]["claims"],
+            everything["triangle"]["credibility"]["claims"],
+        )
+
+    def test_an_unknown_head_of_damage_empties_rather_than_errors(self):
+        resp = self._get(grain="quarterly", head_of_damage="Nonexistent")
+        self.assertEqual(resp.status_code, 200, resp.data)
+
+    def test_earned_premium_is_opt_in(self):
+        self.assertNotIn("earned_premium", self._get(grain="quarterly").data)
+        payload = self._get(grain="quarterly", include="ep").data["earned_premium"]
+        self.assertTrue(payload["available"], payload)
+        self.assertEqual(len(payload["labels"]), 8)
+        self.assertEqual(len(payload["ep"]), 8)
+        self.assertIn("as booked", payload["basis"])
+
+    def test_earned_premium_follows_the_grain(self):
+        for grain, periods in (("monthly", 24), ("quarterly", 8), ("yearly", 2)):
+            payload = self._get(grain=grain, include="ep").data["earned_premium"]
+            self.assertEqual(len(payload["labels"]), periods, grain)
+
+    def test_earned_premium_explains_itself_when_premium_was_not_retained(self):
+        """Every job made before WP8.6 is in this state; an empty panel would read as a bug."""
+        from processing.utils import job_input_subdir
+
+        for f in job_input_subdir(self.job, "premium").glob("*.xlsx"):
+            f.unlink()
+        payload = self._get(grain="quarterly", include="ep").data["earned_premium"]
+        self.assertFalse(payload["available"])
+        self.assertIn("not retained", payload["reason"])
+
+    def test_earned_premium_is_computed_once_per_job_grain_and_filter(self):
+        """The premium workbook is the most expensive input the app reads — 30.4 MB in
+        production — so the second request for the same view must not parse it again."""
+        from unittest.mock import patch
+
+        from django.core.cache import cache
+
+        cache.clear()
+        with patch(
+            "processing.views._premium_source_frame",
+            wraps=__import__("processing.views", fromlist=["x"])._premium_source_frame,
+        ) as loader:
+            self._get(grain="quarterly", include="ep")
+            self._get(grain="quarterly", include="ep")
+            self.assertEqual(loader.call_count, 1, "the premium frame was re-read")
+
+            # A different grain is a different answer, so it is computed rather than served
+            # from the quarterly entry.
+            self._get(grain="monthly", include="ep")
+            self.assertEqual(loader.call_count, 2)
+
+            # As is a different slice of the same grain. The class name carries a space,
+            # which is exactly what a concatenated cache key cannot hold.
+            self._get(grain="quarterly", include="ep", reserving_class="Motor%20Insurance")
+            self.assertEqual(loader.call_count, 3)
+        cache.clear()
+
+    def test_a_cached_absence_still_explains_itself(self):
+        """The explained-absence path is cached too; it must not degrade to a bare empty."""
+        from django.core.cache import cache
+        from processing.utils import job_input_subdir
+
+        cache.clear()
+        for f in job_input_subdir(self.job, "premium").glob("*.xlsx"):
+            f.unlink()
+        first = self._get(grain="quarterly", include="ep").data["earned_premium"]
+        second = self._get(grain="quarterly", include="ep").data["earned_premium"]
+        self.assertEqual(first, second)
+        self.assertIn("not retained", second["reason"])
+        cache.clear()
+
+    def test_coverage_can_be_asked_for_without_switching_basis(self):
+        data = self._get(grain="quarterly", include="coverage").data
+        self.assertIn("coverage", data)
+
+    def test_the_refusal_names_the_grain_that_would_work(self):
+        """Refusing is only half an answer. An extract valued at year-ends supports a yearly
+        reported triangle perfectly well, and the user has no other way to discover that than
+        by trying each button."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        # An annual-valuation inventory: usable at yearly, not at quarterly.
+        quarters = [f"{y}Q{q}" for y in (2016, 2017) for q in range(1, 5)]
+        inventory = pd.DataFrame([
+            {
+                "LOSSDATE": pd.Period(q, freq="Q").start_time,
+                "As at": pd.Timestamp(v),
+                "Amount": 500.0,
+                "RESERVINGCLASS": "Motor Insurance",
+                "RI_TREATY_TYPE": "GROSS",
+                "HEADOFDAMAGE": "Payment",
+            }
+            for v in ("2016-12-31", "2017-12-31")
+            for q in quarters
+            if pd.Period(q, freq="Q") <= pd.Period(pd.Timestamp(v), freq="Q")
+        ])
+        with patch("processing.views._os_source_frame", return_value=inventory):
+            detail = str(
+                self._get(grain="quarterly", basis="reported").data["fieldErrors"]["basis"]
+            )
+            self.assertIn("Not sufficient information", detail)
+            self.assertIn("available at yearly", detail)
+
+            ok = self._get(grain="yearly", basis="reported")
+            self.assertEqual(ok.status_code, 200, ok.data)
+            self.assertEqual(ok.data["coverage"]["shape"], "inventory")

@@ -12,6 +12,7 @@ task, so cleanup never fires. **These tests run the real task body.** That is th
 class of gap surfaces, and it is why they are slow.
 """
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -132,3 +133,74 @@ class InputArchiveAvailabilityTests(TestCase):
         )
         # No snapshots, no archive, no folder -> None rather than a crash.
         self.assertIsNone(_triangle_source_frame(job))
+
+    def test_premium_survives_the_run_so_earned_premium_can_be_shown(self):
+        """WP8.6. Earned premium is computed from the premium rows, which upload-driven runs
+        used to discard — and every one of the client's 272 production jobs is upload-driven."""
+        import zipfile
+
+        from processing.tasks import INPUT_ARCHIVE_PREMIUM_PREFIX
+
+        job = self._run_upload_driven_summary()
+        self.assertTrue(job.input_archive)
+        with job.input_archive.open("rb") as fh:
+            names = zipfile.ZipFile(fh).namelist()
+        self.assertTrue(
+            any(n.startswith(INPUT_ARCHIVE_PREMIUM_PREFIX) for n in names),
+            f"premium missing from the archive: {names}",
+        )
+
+    @override_settings(MODULE1_ARCHIVE_PREMIUM=False)
+    def test_premium_archiving_can_be_traded_for_the_storage(self):
+        """Premium is ~5x the claims bytes. A deployment may decline it; the claims kinds,
+        which every other diagnostic depends on, must still be archived."""
+        import zipfile
+
+        from processing.tasks import (
+            INPUT_ARCHIVE_CLAIMS_PAID_PREFIX,
+            INPUT_ARCHIVE_PREMIUM_PREFIX,
+        )
+
+        job = self._run_upload_driven_summary()
+        with job.input_archive.open("rb") as fh:
+            names = zipfile.ZipFile(fh).namelist()
+        self.assertFalse(any(n.startswith(INPUT_ARCHIVE_PREMIUM_PREFIX) for n in names))
+        self.assertTrue(any(n.startswith(INPUT_ARCHIVE_CLAIMS_PAID_PREFIX) for n in names))
+
+    @override_settings(MODULE1_ARCHIVE_PREMIUM=False)
+    def test_the_diagnostic_explains_a_missing_premium_rather_than_showing_nothing(self):
+        """The degradation path older jobs already take: say why, do not render an empty panel."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        job = self._run_upload_driven_summary()
+        out = StringIO()
+        call_command("triangle_coverage", str(job.id), "--json", stdout=out)
+        ep = json.loads(out.getvalue())[0]["earned_premium"]
+        self.assertFalse(ep["available"])
+        self.assertIn("premium archiving", ep["reason"])
+
+    def test_the_coverage_diagnostic_reads_a_finished_job(self):
+        """WP8.0. The command exists so nobody has to discover an unusable reported triangle
+        by selecting a factor from one — it must therefore work on a job whose staging folder
+        is already gone, which is every finished job."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        job = self._run_upload_driven_summary()
+        out = StringIO()
+        call_command("triangle_coverage", str(job.id), "--json", stdout=out)
+        report = json.loads(out.getvalue())[0]
+
+        # The reference extract lists only each quarter's own claims, so nothing develops.
+        self.assertEqual(report["grains"]["quarterly"]["shape"], "diagonal")
+        self.assertFalse(report["grains"]["quarterly"]["supports_factors"])
+        self.assertEqual(
+            report["grains"]["quarterly"]["valuation_periods"],
+            ["2017-Q1", "2017-Q2", "2017-Q3", "2017-Q4"],
+        )
+        # Since WP8.6 the run archives premium, so earned premium is reachable for this job.
+        self.assertTrue(report["earned_premium"]["available"])
+        self.assertEqual(report["earned_premium"]["source"], "input archive")

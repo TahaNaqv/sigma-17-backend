@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from celery import shared_task
+from django.conf import settings
 from django.core.files import File
 from django.utils import timezone
 
@@ -432,6 +433,9 @@ INPUT_ARCHIVE_EXPENSE = "Expense_CF.xlsx"
 # per kind.
 INPUT_ARCHIVE_CLAIMS_PAID_PREFIX = "claims_paid/"
 INPUT_ARCHIVE_CLAIMS_OS_PREFIX = "claims_os/"
+#: Premium is archived only for runs made after WP8.6; earlier runs cannot show earned
+#: premium on the triangle view, and the UI says so rather than rendering an empty panel.
+INPUT_ARCHIVE_PREMIUM_PREFIX = "premium/"
 
 
 def _persist_summary_claims(job: Module1Job) -> None:
@@ -443,14 +447,26 @@ def _persist_summary_claims(job: Module1Job) -> None:
     and `None` after. Dataset-driven runs were unaffected because their rows are snapshotted;
     upload-driven runs, which are the primary path, lost their claims entirely.
 
-    Only the claims kinds are archived. Premium is not read back by any diagnostic, and
-    archiving it would double the stored bytes for no consumer.
+    **Premium is archived too, since WP8.2.** The original rule was "claims only, because
+    premium is not read back by any diagnostic" — earned premium on the triangle view made that
+    false. It is not free: on the client's production book premium is 30.4 MB against 4.9 MB of
+    paid and 2.2 MB of outstanding, so including it is roughly a fivefold increase per job
+    rather than a doubling. `MODULE1_ARCHIVE_PREMIUM` turns it off for a deployment that would
+    rather trade the feature for the bytes; the triangle view then says earned premium is
+    unavailable and why, which is the same path every pre-WP8.2 job already takes.
+
+    Forward-only by construction: a job that has already run cannot gain an archive it was never
+    given, so earned premium appears on runs made after this ships and not before.
     """
-    members: dict[str, bytes] = {}
-    for kind, prefix in (
+    kinds = [
         ("claims_paid", INPUT_ARCHIVE_CLAIMS_PAID_PREFIX),
         ("claims_os", INPUT_ARCHIVE_CLAIMS_OS_PREFIX),
-    ):
+    ]
+    if getattr(settings, "MODULE1_ARCHIVE_PREMIUM", True):
+        kinds.append(("premium", INPUT_ARCHIVE_PREMIUM_PREFIX))
+
+    members: dict[str, bytes] = {}
+    for kind, prefix in kinds:
         folder = job_input_subdir(job, kind)
         if not folder.is_dir():
             continue
@@ -555,6 +571,10 @@ def run_module1_summary_task(self, job_id: str) -> None:
             exclusion=_load_exclusion(job),
             run_report=run_report,
             class_aliases=aliases or None,
+            # Classes the user has asked to leave out — typically one carrying premium with no
+            # claims supplied at all, which would otherwise earn into the LRC while producing
+            # no claims liability. Canonical names, applied after aliasing.
+            excluded_classes=(job.input_meta or {}).get("excluded_classes") or None,
         )
         # An exclusion that matched no claim produces output identical to no exclusion.
         # Record what actually matched so the UI can say so instead of the user assuming
