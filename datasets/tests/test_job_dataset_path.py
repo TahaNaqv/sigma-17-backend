@@ -23,10 +23,11 @@ from datasets.models import (
     Dataset,
     DatasetSnapshot,
     PremiumRow,
+    PreviousPeriodLcRow,
 )
 from processing.models import Module1Job
 from processing.tasks import _materialize_job_snapshots
-from processing.utils import init_job_work_dir, job_input_subdir
+from processing.utils import init_job_work_dir, job_input_subdir, job_root
 from tenants.models import Membership, Organization
 
 User = get_user_model()
@@ -387,3 +388,45 @@ class TaskMaterializationTests(TestCase):
             folder = job_input_subdir(job, kind)
             files = list(folder.glob("*.xlsx"))
             self.assertGreaterEqual(len(files), 1, f"{kind} missing xlsx")
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class PreviousPeriodLcMaterializationTests(TestCase):
+    """An LC_BOP dataset lands as the LC_BOP sheet of Previous_Period.xlsx, in the
+    exact shape the engine's optional reader accepts."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def test_lc_bop_sheet_is_readable_by_the_engine(self):
+        from datasets.services.snapshots import create_snapshot
+        from module2_engine.engine import LC_MEASURES, _read_lc_bop
+
+        org = _make_org("LC Org")
+        user = _make_user(username="lcuser", perm_keys=["module2.run"], org=org)
+        ds = Dataset.objects.create(
+            organization=org, kind=Dataset.Kind.PREVIOUS_PERIOD_LC, name="LC", created_by=user,
+        )
+        PreviousPeriodLcRow.objects.create(
+            dataset=ds, row_index=0, reserving_class="PROPERTY", uwy=2023,
+            lc_discounted_cy=Decimal("50000.00"), loss_recovery_component=Decimal("5000.00"),
+        )
+        ds.refresh_row_count()
+        snap = create_snapshot(dataset=ds)
+        job = Module1Job.objects.create(
+            user=user, organization=org, job_type=Module1Job.JobType.MODULE2_PROCESS,
+            work_dir=f"module1_jobs/test-lc-{ds.id}",
+            input_meta={"dataset_snapshots": {"previous_period_lc": [str(snap.id)]}},
+        )
+        init_job_work_dir(job)
+        _materialize_job_snapshots(job)
+
+        book = job_root(job) / "in" / "module2" / "previous" / "Previous_Period.xlsx"
+        lc_bop = _read_lc_bop(book.read_bytes())
+        self.assertIsNotNone(lc_bop)
+        self.assertEqual(list(lc_bop.columns), ["RESERVINGCLASS", "UWY", *LC_MEASURES])
+        row = lc_bop.iloc[0]
+        self.assertEqual(float(row["LC Discounted_CY"]), 50000.0)
+        self.assertEqual(float(row["Loss Recovery Component"]), 5000.0)

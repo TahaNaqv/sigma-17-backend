@@ -355,3 +355,82 @@ class Module2ApiTests(TestCase):
         self.assertEqual(res.status_code, 202, res.content)
         self.assertEqual("module2_process", res.json()["job_type"])
         mocked_delay.assert_called_once()
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, SECURE_SSL_REDIRECT=False)
+class Module2ProcessLcDatasetTests(TestCase):
+    """The optional LC_BOP dataset slot on the process endpoint (client revision
+    2026-10-05)."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="m2-lc-org")
+        self.user = User.objects.create_user(username="m2lc", password="testpass123")
+        _give_role_with_permissions(self.user, "Module2 Runner", ["module2.run"], self.org)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _allocate(self):
+        job = Module1Job.objects.create(
+            user=self.user, organization=self.org,
+            job_type=Module1Job.JobType.MODULE2_ALLOCATE, status=Module1Job.Status.SUCCESS,
+            work_dir="module1_jobs/m2-alloc-lc", input_meta={},
+            output_artifacts=["Combined_Summary.xlsx"],
+        )
+        job.output_zip.save(
+            f"{job.id}.zip", ContentFile(_zip_with_xlsx("Combined_Summary.xlsx")), save=True
+        )
+        return job
+
+    def _datasets(self, *kinds):
+        from datasets.models import Dataset
+
+        return [
+            str(Dataset.objects.create(
+                organization=self.org, kind=k, name=f"pp-{k}",
+                source=Dataset.Source.MANUAL, created_by=self.user,
+            ).id)
+            for k in kinds
+        ]
+
+    @patch("processing.views.run_module2_process_task.delay")
+    def test_process_snapshots_the_lc_bop_dataset(self, mocked_delay):
+        from datasets.models import Dataset
+
+        K = Dataset.Kind
+        lic, upr, lc, exp = self._datasets(
+            K.PREVIOUS_PERIOD_LIC, K.PREVIOUS_PERIOD_UPR, K.PREVIOUS_PERIOD_LC, K.EXPENSE_CF
+        )
+        res = self.client.post(
+            "/api/module2/jobs/process/",
+            {
+                "allocate_job_id": str(self._allocate().id),
+                "accounting_period": "2024",
+                "selected_ulr": "[]",
+                "expense_cf_dataset_id": exp,
+                "previous_period_lic_dataset_id": lic,
+                "previous_period_upr_dataset_id": upr,
+                "previous_period_lc_dataset_id": lc,
+            },
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertIn("previous_period_lc", job.input_meta["dataset_snapshots"])
+        mocked_delay.assert_called_once()
+
+    @patch("processing.views.run_module2_process_task.delay")
+    def test_process_rejects_lc_bop_dataset_on_its_own(self, mocked_delay):
+        from datasets.models import Dataset
+
+        (lc, exp) = self._datasets(Dataset.Kind.PREVIOUS_PERIOD_LC, Dataset.Kind.EXPENSE_CF)
+        res = self.client.post(
+            "/api/module2/jobs/process/",
+            {
+                "allocate_job_id": str(self._allocate().id),
+                "accounting_period": "2024",
+                "selected_ulr": "[]",
+                "expense_cf_dataset_id": exp,
+                "previous_period_lc_dataset_id": lc,
+            },
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()

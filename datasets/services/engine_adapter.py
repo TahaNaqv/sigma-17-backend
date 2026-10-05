@@ -53,6 +53,11 @@ KIND_RECIPE = {
         "filename": "Previous_Period.xlsx",
         "sheet_name": "UPR-DAC_BOP",
     },
+    Dataset.Kind.PREVIOUS_PERIOD_LC: {
+        "mode": "named_sheet",
+        "filename": "Previous_Period.xlsx",
+        "sheet_name": "LC_BOP",
+    },
 }
 
 
@@ -64,7 +69,11 @@ def _snapshot_to_dataframe(snapshot: DatasetSnapshot) -> pd.DataFrame:
         return pd.DataFrame(columns=list(excel_columns.values()))
     df = pd.DataFrame(snapshot.rows_payload)
     df = df.drop(columns=[c for c in ("id", "row_index") if c in df.columns])
-    return df.rename(columns=excel_columns)
+    df = df.rename(columns=excel_columns)
+    # rows_payload is jsonb, which does not keep key order; restore the template's
+    # header order so a staged workbook reads like the upload it stands in for.
+    ordered = [c for c in excel_columns.values() if c in df.columns]
+    return df[ordered + [c for c in df.columns if c not in ordered]]
 
 
 def dataset_to_dataframe(dataset) -> pd.DataFrame:

@@ -101,6 +101,20 @@ PREVIOUS_PERIOD_LIC_DB_TO_EXCEL = {
     "discounting_impact": "Discounting Impact",
 }
 
+# LC_BOP sheet — the prior run's allocate "LC" sheet; headers = engine.LC_MEASURES.
+PREVIOUS_PERIOD_LC_DB_TO_EXCEL = {
+    "reserving_class": "RESERVINGCLASS",
+    "uwy": "UWY",
+    "paa_lrc": "PAA_LRC",
+    "gmm_lrc_undiscounted": "GMM LRC_Undiscounted",
+    "gmm_lrc_discounted_cy": "GMM LRC_Discounted_CY",
+    "gmm_lrc_discounted_py": "GMM LRC_Discounted_PY",
+    "lc_undiscounted": "LC Undiscounted",
+    "lc_discounted_cy": "LC Discounted_CY",
+    "lc_discounted_py": "LC Discounted_PY",
+    "loss_recovery_component": "Loss Recovery Component",
+}
+
 PREVIOUS_PERIOD_UPR_DB_TO_EXCEL = {
     "reserving_class": "RESERVINGCLASS",
     "uwy": "UWY",
@@ -141,6 +155,7 @@ DB_TO_EXCEL_FOR_KIND = {
     Dataset.Kind.EXPENSE_CF: EXPENSE_CF_DB_TO_EXCEL,
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PREVIOUS_PERIOD_LIC_DB_TO_EXCEL,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PREVIOUS_PERIOD_UPR_DB_TO_EXCEL,
+    Dataset.Kind.PREVIOUS_PERIOD_LC: PREVIOUS_PERIOD_LC_DB_TO_EXCEL,
     Dataset.Kind.MOVEMENT_OVERRIDE: MOVEMENT_OVERRIDE_DB_TO_EXCEL,
     Dataset.Kind.PAYMENT_PATTERN: PAYMENT_PATTERN_DB_TO_EXCEL,
 }
@@ -178,6 +193,10 @@ REQUIRED_FIELDS_FOR_KIND = {
         "gross_ri",
     ),
     Dataset.Kind.PREVIOUS_PERIOD_UPR: (
+        "reserving_class",
+        "uwy",
+    ),
+    Dataset.Kind.PREVIOUS_PERIOD_LC: (
         "reserving_class",
         "uwy",
     ),

@@ -36,6 +36,9 @@ class Dataset(models.Model):
         EXPENSE_CF = "expense_cf", "Expense Cash Flow"
         PREVIOUS_PERIOD_LIC = "previous_period_lic", "Previous Period — LIC_BOP"
         PREVIOUS_PERIOD_UPR = "previous_period_upr", "Previous Period — UPR-DAC_BOP"
+        # Optional third Previous Period sheet: the prior run's "LC" sheet (opening
+        # Loss Component / Loss Recovery Component balances for the LC roll-forward).
+        PREVIOUS_PERIOD_LC = "previous_period_lc", "Previous Period — LC_BOP"
         # IFRS 17 movement disclosure manual-override inputs (class×cohort keyed).
         # These are the judgment lines the engine cannot compute (onerous Loss
         # Recovery Components, RI non-performance provision, PDR/RI Accrual Reserve
@@ -441,6 +444,36 @@ class PreviousPeriodUprRow(_BaseRow):
         ]
 
 
+class PreviousPeriodLcRow(_BaseRow):
+    """One (reserving_class, UWY) row of the optional LC_BOP sheet — the prior
+    period's allocate "LC" sheet, carried forward as the opening balances of the LC
+    roll-forward (engine.build_lc_movement). Columns mirror engine.LC_MEASURES."""
+
+    reserving_class = models.CharField(max_length=128, db_index=True)
+    uwy = models.IntegerField()
+    paa_lrc = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    gmm_lrc_undiscounted = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    gmm_lrc_discounted_cy = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    gmm_lrc_discounted_py = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    lc_undiscounted = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    lc_discounted_cy = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    lc_discounted_py = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    loss_recovery_component = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+
+    class Meta(_BaseRow.Meta):
+        indexes = [
+            models.Index(fields=["dataset", "reserving_class"]),
+        ]
+
+
 class MovementOverrideRow(_BaseRow):
     """One (reserving_class, cohort/UWY) of manual IFRS 17 movement-disclosure
     overrides — the RI judgment lines the engine cannot derive. Column set mirrors
@@ -515,6 +548,7 @@ ROW_MODEL_FOR_KIND = {
     Dataset.Kind.EXPENSE_CF: ExpenseCfRow,
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PreviousPeriodLicRow,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PreviousPeriodUprRow,
+    Dataset.Kind.PREVIOUS_PERIOD_LC: PreviousPeriodLcRow,
     Dataset.Kind.MOVEMENT_OVERRIDE: MovementOverrideRow,
     Dataset.Kind.PAYMENT_PATTERN: PaymentPatternRow,
 }

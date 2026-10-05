@@ -37,7 +37,22 @@ PRE_SIGNED_SOURCE_COLUMNS = frozenset({
     "RI - S&S",
     "RI - SS",
     "RI - Discounting Impact",
+    # The LC "change" columns are a signed curr − prev delta (engine.build_lc_movement):
+    # a release is already negative, so the disclosure's "-" on the reversal rows is
+    # how the line reads, not a multiplier.
+    "Gross_LC_Change",
+    "RI_LC_Change",
 })
+
+#: Override inputs the engine now computes, so a value in the override dataset is no
+#: longer read. The dataset columns stay (existing datasets and job snapshots remain
+#: valid); the movement run warns when one is non-zero so a stale judgment value is
+#: never silently dropped. key -> what replaced it.
+RETIRED_OVERRIDE_KEYS: dict[str, str] = {
+    "ri_methodology_diff_loss_recovery_bop": "Loss Recovery Component_prev (Previous Period LC_BOP)",
+    "ri_loss_recovery_new_onerous": "RI_LC_New (computed from the LC sheet)",
+    "ri_loss_recovery_reversal_amortization": "RI_LC_Change (computed from the LC sheet)",
+}
 
 _PERIOD_SUFFIX = ("_{p}", "_prev", "_curr")
 

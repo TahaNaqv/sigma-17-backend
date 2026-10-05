@@ -1694,6 +1694,10 @@ class Module2ProcessJobView(APIView):
         previous_upr_ds_id = (
             request.POST.get("previous_period_upr_dataset_id") or ""
         ).strip()
+        # Optional third Previous Period sheet (LC_BOP); dataset path only.
+        previous_lc_ds_id = (
+            request.POST.get("previous_period_lc_dataset_id") or ""
+        ).strip()
 
         # XOR per slot. Expense: one xlsx OR one Expense CF dataset.
         # Previous Period: one xlsx OR (LIC dataset AND UPR dataset).
@@ -1706,12 +1710,12 @@ class Module2ProcessJobView(APIView):
             raise ValidationError(
                 {"expense_cf": "Provide expense_cf or expense_cf_dataset_id."}
             )
-        previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id)
+        previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id or previous_lc_ds_id)
         if previous and previous_via_dataset:
             raise ValidationError({
                 "detail": (
-                    "Provide previous_period or previous_period_{lic,upr}_dataset_id, "
-                    "not both."
+                    "Provide previous_period or previous_period_{lic,upr,lc}_dataset_id, "
+                    "not both. An uploaded workbook carries LC_BOP as a sheet."
                 )
             })
         if not previous and not previous_via_dataset:
@@ -1777,6 +1781,12 @@ class Module2ProcessJobView(APIView):
             expected_kind=Dataset.Kind.PREVIOUS_PERIOD_UPR,
             field_name="previous_period_upr_dataset_id",
         )
+        previous_lc_datasets = _resolve_datasets(
+            request,
+            ids=[previous_lc_ds_id] if previous_lc_ds_id else [],
+            expected_kind=Dataset.Kind.PREVIOUS_PERIOD_LC,
+            field_name="previous_period_lc_dataset_id",
+        )
 
         upload_files = [f for f in (previous, expense) if f]
         if upload_files:
@@ -1819,6 +1829,10 @@ class Module2ProcessJobView(APIView):
             dataset_snapshots["previous_period_upr"] = _snapshot_for_job(
                 previous_upr_datasets, job
             )
+        if previous_lc_datasets:
+            dataset_snapshots["previous_period_lc"] = _snapshot_for_job(
+                previous_lc_datasets, job
+            )
 
         meta = job.input_meta or {}
         meta["files"] = meta_files
@@ -1858,6 +1872,7 @@ class Module2MovementJobView(APIView):
         expense_cf_ds_id = (request.POST.get("expense_cf_dataset_id") or "").strip()
         previous_lic_ds_id = (request.POST.get("previous_period_lic_dataset_id") or "").strip()
         previous_upr_ds_id = (request.POST.get("previous_period_upr_dataset_id") or "").strip()
+        previous_lc_ds_id = (request.POST.get("previous_period_lc_dataset_id") or "").strip()
         override_ds_id = (request.POST.get("movement_override_dataset_id") or "").strip()
 
         # Reuse path: chain off a completed Cash Flow Allocation (process) job so
@@ -1892,9 +1907,9 @@ class Module2MovementJobView(APIView):
             raise ValidationError({"detail": "Provide expense_cf or expense_cf_dataset_id, not both."})
         if not expense and not expense_cf_ds_id and not inheriting:
             raise ValidationError({"expense_cf": "Provide expense_cf or expense_cf_dataset_id."})
-        previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id)
+        previous_via_dataset = bool(previous_lic_ds_id or previous_upr_ds_id or previous_lc_ds_id)
         if previous and previous_via_dataset:
-            raise ValidationError({"detail": "Provide previous_period or previous_period_{lic,upr}_dataset_id, not both."})
+            raise ValidationError({"detail": "Provide previous_period or previous_period_{lic,upr,lc}_dataset_id, not both. An uploaded workbook carries LC_BOP as a sheet."})
         if not previous and not previous_via_dataset and not inheriting:
             raise ValidationError({"previous_period": "Provide previous_period file or both LIC+UPR dataset ids."})
         if previous_via_dataset and not (previous_lic_ds_id and previous_upr_ds_id):
@@ -1986,6 +2001,12 @@ class Module2MovementJobView(APIView):
             expected_kind=Dataset.Kind.PREVIOUS_PERIOD_UPR,
             field_name="previous_period_upr_dataset_id",
         )
+        previous_lc_datasets = _resolve_datasets(
+            request,
+            ids=[previous_lc_ds_id] if previous_lc_ds_id else [],
+            expected_kind=Dataset.Kind.PREVIOUS_PERIOD_LC,
+            field_name="previous_period_lc_dataset_id",
+        )
         override_datasets = _resolve_datasets(
             request,
             ids=[override_ds_id] if override_ds_id else [],
@@ -2036,6 +2057,8 @@ class Module2MovementJobView(APIView):
             dataset_snapshots["previous_period_lic"] = _snapshot_for_job(previous_lic_datasets, job)
         if previous_upr_datasets:
             dataset_snapshots["previous_period_upr"] = _snapshot_for_job(previous_upr_datasets, job)
+        if previous_lc_datasets:
+            dataset_snapshots["previous_period_lc"] = _snapshot_for_job(previous_lc_datasets, job)
         if override_datasets:
             dataset_snapshots["movement_override"] = _snapshot_for_job(override_datasets, job)
 

@@ -865,6 +865,7 @@ def run_module2_process_task(self, job_id: str) -> None:
             },
         )
 
+        process_warnings: list[str] = []
         final_bytes = run_module2_process(
             combined_bytes,
             previous_bytes,
@@ -872,8 +873,16 @@ def run_module2_process_task(self, job_id: str) -> None:
             accounting_period,
             selected_ulr,
             pattern_override=_load_pattern_override(job),
+            warnings_out=process_warnings,
         )
         (out_dir / "Module2_Final_Output.xlsx").write_bytes(final_bytes)
+        # Non-fatal input findings (e.g. Previous Period without an LC_BOP sheet).
+        # Additive key: jobs produced before it shipped lack it.
+        if process_warnings:
+            meta = job.input_meta or {}
+            meta["process_warnings"] = process_warnings
+            job.input_meta = meta
+            job.save(update_fields=["input_meta"])
 
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = _zip_output_dir(out_dir, Path(tmp) / "outputs")
@@ -981,6 +990,8 @@ def run_module2_movement_task(self, job_id: str) -> None:
             # must agree with them. Additive key — consumers must treat it as optional,
             # since every job produced before this shipped lacks it.
             "notes": notes_report(result),
+            # Non-fatal input findings (missing LC_BOP, retired override values, ...).
+            "warnings": list(result.warnings),
         }
         job.input_meta = meta
         job.save(update_fields=["input_meta"])

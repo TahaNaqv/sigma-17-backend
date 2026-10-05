@@ -17,6 +17,7 @@ from .models import (
     MovementOverrideRow,
     PremiumRow,
     PreviousPeriodLicRow,
+    PreviousPeriodLcRow,
     PreviousPeriodUprRow,
     PaymentPatternRow,
 )
@@ -235,6 +236,23 @@ class PreviousPeriodUprRowSerializer(_RowBaseSerializer):
         )
 
 
+class PreviousPeriodLcRowSerializer(_RowBaseSerializer):
+    class Meta(_RowBaseSerializer.Meta):
+        model = PreviousPeriodLcRow
+        fields = _RowBaseSerializer.Meta.fields + (
+            "reserving_class",
+            "uwy",
+            "paa_lrc",
+            "gmm_lrc_undiscounted",
+            "gmm_lrc_discounted_cy",
+            "gmm_lrc_discounted_py",
+            "lc_undiscounted",
+            "lc_discounted_cy",
+            "lc_discounted_py",
+            "loss_recovery_component",
+        )
+
+
 class MovementOverrideRowSerializer(_RowBaseSerializer):
     class Meta(_RowBaseSerializer.Meta):
         model = MovementOverrideRow
@@ -272,6 +290,7 @@ ROW_SERIALIZER_FOR_KIND = {
     Dataset.Kind.EXPENSE_CF: ExpenseCfRowSerializer,
     Dataset.Kind.PREVIOUS_PERIOD_LIC: PreviousPeriodLicRowSerializer,
     Dataset.Kind.PREVIOUS_PERIOD_UPR: PreviousPeriodUprRowSerializer,
+    Dataset.Kind.PREVIOUS_PERIOD_LC: PreviousPeriodLcRowSerializer,
     Dataset.Kind.MOVEMENT_OVERRIDE: MovementOverrideRowSerializer,
     Dataset.Kind.PAYMENT_PATTERN: PaymentPatternRowSerializer,
 }

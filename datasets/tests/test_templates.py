@@ -57,6 +57,7 @@ class TemplateRenderTests(TestCase):
         wb = _load("previous_period")
         self.assertIn("LIC_BOP", wb.sheetnames)
         self.assertIn("UPR-DAC_BOP", wb.sheetnames)
+        self.assertIn("LC_BOP", wb.sheetnames)
 
     def test_reserve_has_both_triangle_sheets(self):
         wb = _load("reserve")
@@ -80,6 +81,7 @@ class TemplateRoundTripTests(TestCase):
         Dataset.Kind.EXPENSE_CF,
         Dataset.Kind.PREVIOUS_PERIOD_LIC,
         Dataset.Kind.PREVIOUS_PERIOD_UPR,
+        Dataset.Kind.PREVIOUS_PERIOD_LC,
     )
 
     def setUp(self):

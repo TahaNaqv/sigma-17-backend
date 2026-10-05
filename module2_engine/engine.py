@@ -989,6 +989,128 @@ def _derive_cy_py_payment(
     return piv
 
 
+#: The per-(class, UWY) measures of the allocate "LC" sheet, in sheet order. The
+#: Previous Period workbook's optional ``LC_BOP`` sheet carries the same columns at
+#: the prior reporting date — i.e. it is the prior run's "LC" sheet, pasted as-is.
+LC_MEASURES: tuple[str, ...] = (
+    "PAA_LRC",
+    "GMM LRC_Undiscounted",
+    "GMM LRC_Discounted_CY",
+    "GMM LRC_Discounted_PY",
+    "LC Undiscounted",
+    "LC Discounted_CY",
+    "LC Discounted_PY",
+    "Loss Recovery Component",
+)
+LC_BOP_SHEET = "LC_BOP"
+
+#: The new-business / change split of the onerous-contract balances, per sheet:
+#: (balance measure, "new" column, "change" column). Feeds Gross rows 43/45 and RI
+#: rows 34/36 of the movement disclosure.
+LC_MOVEMENT_SPLITS: tuple[tuple[str, str, str], ...] = (
+    ("LC Discounted_CY", "Gross_LC_New", "Gross_LC_Change"),
+    ("Loss Recovery Component", "RI_LC_New", "RI_LC_Change"),
+)
+
+
+def lc_movement_columns() -> list[str]:
+    """The IFRS Summary columns the LC roll-forward adds, in workbook order
+    (client file 2026-10-05, IFRS Summary CK:DD)."""
+    return (
+        [f"{m}_prev" for m in LC_MEASURES]
+        + [f"{m}_curr" for m in LC_MEASURES]
+        + [col for _, new, change in LC_MOVEMENT_SPLITS for col in (new, change)]
+    )
+
+
+def _read_lc_bop(previous_period_bytes: bytes) -> "pd.DataFrame | None":
+    """The optional ``LC_BOP`` sheet of the Previous Period workbook, or None.
+
+    Optional so every Previous Period workbook issued before the sheet existed keeps
+    working; the caller records a warning and treats the opening balances as zero.
+    """
+    with pd.ExcelFile(io.BytesIO(previous_period_bytes), engine=READ_ENGINE) as book:
+        if LC_BOP_SHEET not in book.sheet_names:
+            return None
+        lc_bop = book.parse(LC_BOP_SHEET)
+    _require_columns(lc_bop, LC_BOP_SHEET, ["RESERVINGCLASS", "UWY", *LC_MEASURES])
+    return lc_bop
+
+
+def build_lc_movement(
+    lc_curr: pd.DataFrame,
+    lc_prev: "pd.DataFrame | None",
+    keys: pd.DataFrame,
+    accounting_period: int,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Opening/closing LC balances and their new-business vs change split.
+
+    Returns one row per ``keys`` (RESERVINGCLASS, UWY), in ``keys`` order, carrying
+    ``lc_movement_columns()``, plus any warnings. Per (class, UWY) and per
+    ``LC_MOVEMENT_SPLITS`` balance B:
+
+        new    = B_curr            if UWY >= accounting_period else 0
+        change = B_curr - B_prev   if UWY <  accounting_period else 0
+
+    so that ``B_prev + new + change == B_curr`` for every cohort up to the accounting
+    period (a current cohort has no opening balance). The client's specification
+    reads ``UWY == accounting_period`` for ``new``; ``>=`` is identical for those
+    cohorts and additionally books cohorts written in advance (UWY after the
+    accounting period) as new, instead of leaving them as a permanent reconciliation
+    break. Recorded as deviation LC-1 in docs/IFRS17_LC_ROLLFORWARD_PLAN.md.
+    """
+    warnings: list[str] = []
+    key_cols = ["RESERVINGCLASS", "UWY"]
+    out = keys[key_cols].copy()
+    uwy = out["UWY"].astype(int)
+
+    def _aligned(frame: pd.DataFrame, suffix: str, source: str) -> pd.DataFrame:
+        frame = frame[key_cols + list(LC_MEASURES)].copy()
+        frame["UWY"] = frame["UWY"].astype(int)
+        dupes = frame.duplicated(key_cols, keep=False)
+        if dupes.any():
+            sample = frame.loc[dupes, key_cols].drop_duplicates().head(5)
+            pairs = ", ".join(f"{r.RESERVINGCLASS}/{r.UWY}" for r in sample.itertuples())
+            raise ValueError(
+                f"{source} has more than one row for the same RESERVINGCLASS and UWY "
+                f"(e.g. {pairs}). Each class and underwriting year must appear once."
+            )
+        known = set(zip(out["RESERVINGCLASS"], uwy))
+        orphans = [k for k in zip(frame["RESERVINGCLASS"], frame["UWY"]) if k not in known]
+        if orphans:
+            shown = ", ".join(f"{c}/{u}" for c, u in orphans[:5])
+            warnings.append(
+                f"{source}: {len(orphans)} class/UWY row(s) are not in the current period "
+                f"and were ignored (e.g. {shown})."
+            )
+        frame = frame.rename(columns={m: f"{m}_{suffix}" for m in LC_MEASURES})
+        aligned = pd.DataFrame({"RESERVINGCLASS": out["RESERVINGCLASS"], "UWY": uwy}).merge(
+            frame, on=key_cols, how="left"
+        )
+        return aligned.drop(columns=key_cols).fillna(0.0).astype(float)
+
+    if lc_prev is None:
+        warnings.append(
+            f"Previous Period has no '{LC_BOP_SHEET}' sheet, so opening Loss Component and "
+            f"Loss Recovery Component balances are taken as zero. Add the prior period's "
+            f"'LC' sheet as '{LC_BOP_SHEET}' to report the LC movement."
+        )
+        prev = pd.DataFrame(0.0, index=out.index, columns=[f"{m}_prev" for m in LC_MEASURES])
+    else:
+        prev = _aligned(lc_prev, "prev", f"Previous Period '{LC_BOP_SHEET}'")
+        prev.index = out.index
+    curr = _aligned(lc_curr, "curr", "LC")
+    curr.index = out.index
+
+    out = pd.concat([out, prev, curr], axis=1)
+    is_new = (uwy >= int(accounting_period)).to_numpy()
+    for measure, new_col, change_col in LC_MOVEMENT_SPLITS:
+        b_prev, b_curr = out[f"{measure}_prev"], out[f"{measure}_curr"]
+        out[new_col] = np.where(is_new, b_curr, 0.0)
+        out[change_col] = np.where(is_new, 0.0, b_curr - b_prev)
+    return out[key_cols + lc_movement_columns()], warnings
+
+
 @dataclass(frozen=True)
 class ProcessFrames:
     """In-memory intermediates produced by the Module 2 process pipeline.
@@ -1006,6 +1128,8 @@ class ProcessFrames:
     # Additive, movement-only: CY/PY Paid split per (class, UWY). Not written to the
     # process workbook — keeps process output bit-identical. None for legacy callers.
     cy_py_payment: "pd.DataFrame | None" = None
+    # Non-fatal input findings (e.g. no LC_BOP sheet); surfaced on the job record.
+    warnings: tuple[str, ...] = ()
 
 
 def _process_intermediates(
@@ -1066,6 +1190,17 @@ def _process_intermediates(
         }
     )
     ifrs_summary_df = ifrs_summary_df.merge(prev_upr, on=["RESERVINGCLASS", "UWY"], how="left")
+    # LC roll-forward block (IFRS Summary CK:DD), between the UPR openings and the
+    # Expense-CF columns. Assigned positionally — build_lc_movement returns one row
+    # per ifrs_summary_df row in the same order — so no existing column is touched.
+    lc_block, warnings = build_lc_movement(
+        allocate_sheets["LC"],
+        _read_lc_bop(previous_period_bytes),
+        ifrs_summary_df,
+        int(accounting_period),
+    )
+    for col in lc_movement_columns():
+        ifrs_summary_df[col] = lc_block[col].to_numpy()
     ifrs_summary_df = ifrs_summary_df.merge(expense_cf, on=["RESERVINGCLASS", "UWY"], how="left")
     # Movement-only side frame; process output is unaffected.
     cy_py_payment = _derive_cy_py_payment(current_main, previous_df, int(accounting_period))
@@ -1074,6 +1209,7 @@ def _process_intermediates(
         result_df=result_df,
         ifrs_summary_df=ifrs_summary_df,
         cy_py_payment=cy_py_payment,
+        warnings=tuple(warnings),
     )
 
 
@@ -1117,6 +1253,69 @@ def create_lic_table(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
     return table
 
 
+def ri_lrc_components(suffix: str) -> dict[str, int]:
+    """RI LRC build-up columns and signs for a prev/curr suffix. The signs are the RI
+    movement sheet's own (UPR +, premium payable −, unearned commission −), so the
+    reconciliation's RI LRC equals the sheet's opening/closing remaining-coverage asset."""
+    return {f"RI UPR_{suffix}": 1, f"RI_Payable_{suffix}": -1, f"UCR_{suffix}": -1}
+
+
+def ri_lic_components(suffix: str) -> dict[str, int]:
+    """RI LIC build-up columns and signs, in the client's reconciliation order. S&S,
+    SS and discounting are stored signed (summed straight, as the Gross LIC is); the
+    non-performance provision carries the RI sheet's "−", so the RI LIC equals the
+    sheet's amounts recoverable on incurred claims plus risk adjustment."""
+    return {
+        f"RI - Outstanding_{suffix}": 1,
+        f"RI - S&S_{suffix}": 1,
+        f"RI - Payment_{suffix}": 1,
+        f"RI - SS_{suffix}": 1,
+        f"RI - ULAE_{suffix}": 1,
+        f"RI - Discounting Impact_{suffix}": 1,
+        f"RI_Rec_GOP_{suffix}": 1,
+        f"RI Rec Provision_{suffix}": -1,
+        f"RI - RA (OS)_{suffix}": 1,
+        f"RI - RA (IBNR)_{suffix}": 1,
+    }
+
+
+def _signed_class_sums(df: pd.DataFrame, components: dict[str, int], classes: pd.Series) -> pd.DataFrame:
+    """Per-class sums of ``components`` (each times its sign), aligned to ``classes``."""
+    sums = df.groupby("RESERVINGCLASS")[list(components)].sum()
+    sums = sums.reindex(classes.to_numpy()).fillna(0.0)
+    for col, sign in components.items():
+        sums[col] = sums[col] * sign
+    return sums.reset_index(drop=True)
+
+
+def create_lrc_reconciliation(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
+    """The full LRC BOP/EOP table: Gross LRC (``create_lrc_table``), then the Loss
+    Component, then the RI LRC build-up and the Loss Recovery Component."""
+    table = create_lrc_table(df, LRC_COMPONENTS[suffix])
+    classes = table["RESERVINGCLASS"]
+    lc = _signed_class_sums(df, {f"LC Discounted_CY_{suffix}": 1}, classes)
+    table["Loss Component"] = lc.iloc[:, 0].to_numpy()
+    ri_parts = ri_lrc_components(suffix)
+    ri = _signed_class_sums(df, ri_parts, classes)
+    for col in ri_parts:
+        table[col] = ri[col].to_numpy()
+    table["RI LRC"] = ri[list(ri_parts)].sum(axis=1).to_numpy()
+    lorc = _signed_class_sums(df, {f"Loss Recovery Component_{suffix}": 1}, classes)
+    table["Loss Recovery Component"] = lorc.iloc[:, 0].to_numpy()
+    return table
+
+
+def create_lic_reconciliation(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
+    """The full LIC BOP/EOP table: Gross LIC (``create_lic_table``), then the RI LIC."""
+    table = create_lic_table(df, suffix)
+    ri_parts = ri_lic_components(suffix)
+    ri = _signed_class_sums(df, ri_parts, table["RESERVINGCLASS"])
+    for col in ri_parts:
+        table[col] = ri[col].to_numpy()
+    table["RI LIC"] = ri[list(ri_parts)].sum(axis=1).to_numpy()
+    return table
+
+
 def run_module2_process(
     combined_summary_bytes: bytes,
     previous_period_bytes: bytes,
@@ -1125,7 +1324,10 @@ def run_module2_process(
     selected_ulr_rows: list[dict[str, Any]],
     *,
     pattern_override: "PatternOverride | None" = None,
+    warnings_out: "list[str] | None" = None,
 ) -> bytes:
+    """Produce the Module 2 process workbook. ``warnings_out``, when given, receives
+    the run's non-fatal input findings (``ProcessFrames.warnings``)."""
     frames = _process_intermediates(
         combined_summary_bytes,
         previous_period_bytes,
@@ -1134,34 +1336,22 @@ def run_module2_process(
         selected_ulr_rows,
         pattern_override=pattern_override,
     )
+    if warnings_out is not None:
+        warnings_out.extend(frames.warnings)
     allocate_sheets = frames.allocate_sheets
     result_df = frames.result_df
     ifrs_summary_df = frames.ifrs_summary_df
 
-    prev_components = {
-        "Gross UPR_prev": 1,
-        "Rec_GOP_prev": -1,
-        "DAC_prev": -1,
-        "Comm_Payable_prev": 1,
-        "Rec_Provision_prev": 1,
-    }
-    curr_components = {
-        "Gross UPR_curr": 1,
-        "Rec_GOP_curr": -1,
-        "DAC_curr": -1,
-        "Comm_Payable_curr": 1,
-        "Rec_Provision_curr": 1,
-    }
-    lrc_prev = create_lrc_table(ifrs_summary_df, prev_components)
-    lrc_curr = create_lrc_table(ifrs_summary_df, curr_components)
+    lrc_prev = create_lrc_reconciliation(ifrs_summary_df, "prev")
+    lrc_curr = create_lrc_reconciliation(ifrs_summary_df, "curr")
     lrc_prev_with_header = pd.DataFrame([["LRC BOP"] + [""] * (len(lrc_prev.columns) - 1)], columns=lrc_prev.columns)
     lrc_prev_with_header = pd.concat([lrc_prev_with_header, lrc_prev], ignore_index=True)
     lrc_curr_with_header = pd.DataFrame([["LRC EOP"] + [""] * (len(lrc_curr.columns) - 1)], columns=lrc_curr.columns)
     lrc_curr_with_header = pd.concat([lrc_curr_with_header, lrc_curr], ignore_index=True)
     startrow_lrc_curr = len(lrc_prev_with_header) + 2
 
-    lic_prev = create_lic_table(ifrs_summary_df, "prev")
-    lic_curr = create_lic_table(ifrs_summary_df, "curr")
+    lic_prev = create_lic_reconciliation(ifrs_summary_df, "prev")
+    lic_curr = create_lic_reconciliation(ifrs_summary_df, "curr")
     lic_prev_with_header = pd.DataFrame([["LIC BOP"] + [""] * (len(lic_prev.columns) - 1)], columns=lic_prev.columns)
     lic_prev_with_header = pd.concat([lic_prev_with_header, lic_prev], ignore_index=True)
     lic_curr_with_header = pd.DataFrame([["LIC EOP"] + [""] * (len(lic_curr.columns) - 1)], columns=lic_curr.columns)

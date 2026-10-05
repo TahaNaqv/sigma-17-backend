@@ -157,12 +157,15 @@ TEMPLATES: dict[str, TemplateDef] = {
     _K.PREVIOUS_PERIOD_UPR: TemplateDef(
         "previous_period_upr_template.xlsx", "Previous Period — UPR-DAC_BOP", (_K.PREVIOUS_PERIOD_UPR,)
     ),
+    _K.PREVIOUS_PERIOD_LC: TemplateDef(
+        "previous_period_lc_template.xlsx", "Previous Period — LC_BOP", (_K.PREVIOUS_PERIOD_LC,)
+    ),
     # Composite workbook for the Module 2 Process `previous_period` upload —
-    # both sheets in one file.
+    # all three sheets in one file (LC_BOP is optional to the engine).
     "previous_period": TemplateDef(
         "previous_period_template.xlsx",
-        "Previous Period (LIC_BOP + UPR-DAC_BOP)",
-        (_K.PREVIOUS_PERIOD_LIC, _K.PREVIOUS_PERIOD_UPR),
+        "Previous Period (LIC_BOP + UPR-DAC_BOP + LC_BOP)",
+        (_K.PREVIOUS_PERIOD_LIC, _K.PREVIOUS_PERIOD_UPR, _K.PREVIOUS_PERIOD_LC),
     ),
     # Reserve triangle skeleton for the Update Reserve upload.
     "reserve": TemplateDef("reserve_template.xlsx", "Reserve Triangles", reserve=True),

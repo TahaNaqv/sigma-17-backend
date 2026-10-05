@@ -49,9 +49,15 @@ STRUCTURAL = {"opening", "closing", "subtotal", "section"}
 
 #: Formula corrections the client issued *after* signing off Module2_Final_Output.xlsx,
 #: applied on top of the verbatim extract so ``client_source_extract.json`` stays a faithful
-#: copy of their file. Keyed by (sheet, Excel row, bucket) -> (expected expr, corrected expr,
-#: rationale). The expected expr is asserted: if the client re-issues the workbook with the
-#: fix already in it, generation fails loudly here instead of silently double-applying.
+#: copy of their file. Keyed by (sheet, Excel row, bucket) -> (expected cell, corrected expr,
+#: rationale). The expected cell is asserted (see ``_cell_signature``): if the client
+#: re-issues the workbook with the fix already in it, generation fails loudly here instead
+#: of silently double-applying. The corrected cell is always a computed source expression.
+#:
+#: The 2026-10-05 entries come from the client's revision file
+#: ``Module2_Final_Output-check.xlsx`` (sha256 ecfc2adb064d…), which inserted the LC
+#: roll-forward block into IFRS Summary (CK:DD) and relinked the Loss Component / Loss
+#: Recovery Component columns to it. See docs/IFRS17_LC_ROLLFORWARD_PLAN.md.
 CLIENT_AMENDMENTS: dict[tuple[str, int, str], tuple[str, str, str]] = {
     ("Gross", 29, "LRC_excl_LC"): (
         "Rec_GOP_curr-Rec_Provision_prev",
@@ -69,7 +75,65 @@ CLIENT_AMENDMENTS: dict[tuple[str, int, str], tuple[str, str, str]] = {
         "DAC amortisation enters insurance service expenses as the decrease in DAC over "
         "the period, so the line is prev minus curr.",
     ),
+    ("Gross", 25, "Loss_Component"): (
+        "const:-10721029.493254356",
+        "LC Discounted_CY_prev",
+        "2026-10-05 client revision (Gross F25 -> 'IFRS Summary'!CP1): the opening Loss "
+        "Component is the prior period's discounted LC, from Previous Period LC_BOP. "
+        "Replaces a flattened constant.",
+    ),
+    ("Gross", 43, "Loss_Component"): (
+        "empty:None",
+        "Gross_LC_New",
+        "2026-10-05 client revision (Gross F43 -> 'IFRS Summary'!DA1): losses on new "
+        "onerous contracts = the current cohort's LC (engine.build_lc_movement).",
+    ),
+    ("Gross", 45, "Loss_Component"): (
+        "empty:None",
+        "Gross_LC_Change",
+        "2026-10-05 client revision (Gross F45 -> 'IFRS Summary'!DB1): reversal of losses "
+        "on existing onerous contracts = LC curr - prev for prior cohorts. Stored signed.",
+    ),
+    ("RI", 6, "Assets_Remaining_Coverage"): (
+        "RI Premium Paid",
+        "RI_Payable_prev",
+        "2026-10-05 client correction (RI D6 -> 'IFRS Summary'!DQ1): opening premium "
+        "payable is the RI_Payable balance, not the period's RI Premium Paid cash flow.",
+    ),
+    ("RI", 20, "Loss_Recovery_Component"): (
+        "override:DX",
+        "Loss Recovery Component_prev",
+        "2026-10-05 client revision (RI F20 -> 'IFRS Summary'!CR1): the opening Loss "
+        "Recovery Component comes from Previous Period LC_BOP instead of a manual override.",
+    ),
+    ("RI", 20, "Risk_Adjustment"): (
+        "RI - RA (OS)_curr+RI - RA (IBNR)_prev",
+        "RI - RA (OS)_prev+RI - RA (IBNR)_prev",
+        "2026-10-05 client correction (RI J20 BP -> BR): the opening risk adjustment uses "
+        "the opening RA (OS), not the closing one.",
+    ),
+    ("RI", 34, "Loss_Recovery_Component"): (
+        "override:BI",
+        "RI_LC_New",
+        "2026-10-05 client revision (RI F34 -> 'IFRS Summary'!DC1): Loss Recovery "
+        "Component for new onerous contracts, computed instead of a manual override.",
+    ),
+    ("RI", 36, "Loss_Recovery_Component"): (
+        "override:BJ",
+        "RI_LC_Change",
+        "2026-10-05 client revision (RI F36 -> 'IFRS Summary'!DD1): reversal of the Loss "
+        "Recovery Component for existing cohorts, computed instead of a manual override. "
+        "Stored signed.",
+    ),
 }
+
+
+def _cell_signature(cell: dict) -> str:
+    """What an amendment asserts about the verbatim extract cell: the source expression
+    of a computed cell, else ``<type>:<detail>`` (e.g. ``override:DX``, ``empty:None``)."""
+    if cell.get("type") == "computed":
+        return cell.get("source_expr")
+    return f"{cell.get('type')}:{cell.get('detail')}"
 
 
 def _amend(sheet: str, row: int, bucket: str, cell: dict) -> dict:
@@ -78,14 +142,15 @@ def _amend(sheet: str, row: int, bucket: str, cell: dict) -> dict:
     if not amendment:
         return cell
     expected, corrected, _why = amendment
-    actual = cell.get("source_expr")
+    actual = _cell_signature(cell)
     if actual != expected:
         raise SystemExit(
-            f"amendment for {sheet} row {row} {bucket} expected source_expr {expected!r} "
+            f"amendment for {sheet} row {row} {bucket} expected {expected!r} "
             f"but the extract holds {actual!r} — re-check CLIENT_AMENDMENTS against the "
             f"current client file before regenerating."
         )
-    return {**cell, "source_expr": corrected, "amended": True}
+    return {"sign": cell.get("sign"), "type": "computed", "source_expr": corrected,
+            "amended": True}
 
 
 def _opening_rows(client_lines: list[dict]) -> set[int]:

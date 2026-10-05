@@ -16,6 +16,7 @@ from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from module2_engine.movement.compute import MovementResult
 from processing.models import Module1Job
 from processing.tests.test_module2_api import (
     _give_role_with_permissions,
@@ -290,7 +291,8 @@ class MovementApiTests(TestCase):
             "cells_checked": 0, "max_abs_residual": 0.0,
             "tolerance": {"abs": 1.0, "rel": 0.0}, "top_breaches": [],
         }
-        with patch.object(tasks, "run_module2_movement", return_value=(b"XLSX", {})) as mv, \
+        with patch.object(tasks, "run_module2_movement",
+                          return_value=(b"XLSX", MovementResult())) as mv, \
              patch.object(tasks, "reconciliation_report", return_value=recon), \
              patch.object(tasks, "notes_report", return_value={"controls_checked": 0}), \
              patch("module2_engine.movement.workbook.build_json_companion", return_value={}):
@@ -414,6 +416,83 @@ class MovementApiTests(TestCase):
         job = Module1Job.objects.get(pk=res.json()["id"])
         self.assertIn("movement_override", job.input_meta["dataset_snapshots"])
         mocked_delay.assert_called_once()
+
+    def _previous_datasets(self, *kinds):
+        from datasets.models import Dataset
+
+        return {
+            kind: Dataset.objects.create(
+                organization=self.org, kind=kind, name=f"pp-{kind}",
+                source=Dataset.Source.MANUAL, created_by=self.user,
+            )
+            for kind in kinds
+        }
+
+    @patch("processing.views.run_module2_movement_task.delay")
+    def test_accepts_previous_period_lc_dataset(self, mocked_delay):
+        from datasets.models import Dataset
+
+        K = Dataset.Kind
+        ds = self._previous_datasets(K.PREVIOUS_PERIOD_LIC, K.PREVIOUS_PERIOD_UPR,
+                                     K.PREVIOUS_PERIOD_LC)
+        allocate = self._allocate_job("mv-lc")
+        _prev, exp = self._files()
+        res = self.client.post(
+            URL,
+            {
+                "allocate_job_id": str(allocate.id),
+                "accounting_period": "2024",
+                "expense_cf": exp,
+                "previous_period_lic_dataset_id": str(ds[K.PREVIOUS_PERIOD_LIC].id),
+                "previous_period_upr_dataset_id": str(ds[K.PREVIOUS_PERIOD_UPR].id),
+                "previous_period_lc_dataset_id": str(ds[K.PREVIOUS_PERIOD_LC].id),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 202, res.content)
+        job = Module1Job.objects.get(pk=res.json()["id"])
+        self.assertIn("previous_period_lc", job.input_meta["dataset_snapshots"])
+
+    @patch("processing.views.run_module2_movement_task.delay")
+    def test_rejects_lc_dataset_alongside_previous_period_file(self, mocked_delay):
+        from datasets.models import Dataset
+
+        ds = self._previous_datasets(Dataset.Kind.PREVIOUS_PERIOD_LC)
+        allocate = self._allocate_job("mv-lc-file")
+        prev, exp = self._files()
+        res = self.client.post(
+            URL,
+            {
+                "allocate_job_id": str(allocate.id),
+                "accounting_period": "2024",
+                "previous_period": prev,
+                "expense_cf": exp,
+                "previous_period_lc_dataset_id": str(ds[Dataset.Kind.PREVIOUS_PERIOD_LC].id),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
+
+    @patch("processing.views.run_module2_movement_task.delay")
+    def test_rejects_lc_dataset_without_lic_and_upr(self, mocked_delay):
+        from datasets.models import Dataset
+
+        ds = self._previous_datasets(Dataset.Kind.PREVIOUS_PERIOD_LC)
+        allocate = self._allocate_job("mv-lc-alone")
+        _prev, exp = self._files()
+        res = self.client.post(
+            URL,
+            {
+                "allocate_job_id": str(allocate.id),
+                "accounting_period": "2024",
+                "expense_cf": exp,
+                "previous_period_lc_dataset_id": str(ds[Dataset.Kind.PREVIOUS_PERIOD_LC].id),
+            },
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
+        mocked_delay.assert_not_called()
 
     @patch("processing.views.run_module2_movement_task.delay")
     def test_rejects_wrong_kind_override_dataset(self, mocked_delay):

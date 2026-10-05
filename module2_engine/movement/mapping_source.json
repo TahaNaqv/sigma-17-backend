@@ -8,15 +8,23 @@
   "schema_version": "2026.06",
   "client_amendments": [
    "Gross row 29 LRC_excl_LC: Rec_GOP_curr-Rec_Provision_prev -> Rec_Provision_curr-Rec_Provision_prev",
-   "Gross row 41 LRC_excl_LC: DAC_curr-DAC_prev -> DAC_prev-DAC_curr"
+   "Gross row 41 LRC_excl_LC: DAC_curr-DAC_prev -> DAC_prev-DAC_curr",
+   "Gross row 25 Loss_Component: const:-10721029.493254356 -> LC Discounted_CY_prev",
+   "Gross row 43 Loss_Component: empty:None -> Gross_LC_New",
+   "Gross row 45 Loss_Component: empty:None -> Gross_LC_Change",
+   "RI row 6 Assets_Remaining_Coverage: RI Premium Paid -> RI_Payable_prev",
+   "RI row 20 Loss_Recovery_Component: override:DX -> Loss Recovery Component_prev",
+   "RI row 20 Risk_Adjustment: RI - RA (OS)_curr+RI - RA (IBNR)_prev -> RI - RA (OS)_prev+RI - RA (IBNR)_prev",
+   "RI row 34 Loss_Recovery_Component: override:BI -> RI_LC_New",
+   "RI row 36 Loss_Recovery_Component: override:BJ -> RI_LC_Change"
   ]
  },
  "Gross": {
   "coverage": {
-   "D": 33,
+   "D": 36,
    "Δ": 4,
    "O": 0,
-   "M": 36,
+   "M": 33,
    "structural": 17
   },
   "lines": {
@@ -287,8 +295,9 @@
      },
      "Loss_Component": {
       "sign": "+/-",
-      "tier": "M",
-      "source": null
+      "tier": "D",
+      "source": "LC Discounted_CY_{p}",
+      "amended": "2026-10-05 client revision (Gross F25 -> 'IFRS Summary'!CP1): the opening Loss Component is the prior period's discounted LC, from Previous Period LC_BOP. Replaces a flattened constant."
      },
      "LIC_excl_RA": {
       "sign": "+/-",
@@ -502,8 +511,9 @@
     "buckets": {
      "Loss_Component": {
       "sign": "+",
-      "tier": "M",
-      "source": null
+      "tier": "D",
+      "source": "Gross_LC_New",
+      "amended": "2026-10-05 client revision (Gross F43 -> 'IFRS Summary'!DA1): losses on new onerous contracts = the current cohort's LC (engine.build_lc_movement)."
      }
     }
    },
@@ -519,8 +529,10 @@
     "buckets": {
      "Loss_Component": {
       "sign": "-",
-      "tier": "M",
-      "source": null
+      "tier": "D",
+      "source": "Gross_LC_Change",
+      "amended": "2026-10-05 client revision (Gross F45 -> 'IFRS Summary'!DB1): reversal of losses on existing onerous contracts = LC curr - prev for prior cohorts. Stored signed.",
+      "apply_sign": false
      }
     }
    },
@@ -865,9 +877,9 @@
  },
  "RI": {
   "coverage": {
-   "D": 26,
+   "D": 29,
    "Δ": 3,
-   "O": 8,
+   "O": 5,
    "M": 31,
    "structural": 16
   },
@@ -903,7 +915,8 @@
      "Assets_Remaining_Coverage": {
       "sign": "-",
       "tier": "D",
-      "source": "RI Premium Paid"
+      "source": "RI_Payable_{p}",
+      "amended": "2026-10-05 client correction (RI D6 -> 'IFRS Summary'!DQ1): opening premium payable is the RI_Payable balance, not the period's RI Premium Paid cash flow."
      }
     }
    },
@@ -1103,9 +1116,9 @@
      },
      "Loss_Recovery_Component": {
       "sign": "+/-",
-      "tier": "O",
-      "source": null,
-      "override_key": "ri_methodology_diff_loss_recovery_bop"
+      "tier": "D",
+      "source": "Loss Recovery Component_{p}",
+      "amended": "2026-10-05 client revision (RI F20 -> 'IFRS Summary'!CR1): the opening Loss Recovery Component comes from Previous Period LC_BOP instead of a manual override."
      },
      "Amounts_Recoverable_IC": {
       "sign": "+/-",
@@ -1116,7 +1129,8 @@
      "Risk_Adjustment": {
       "sign": "+/-",
       "tier": "Δ",
-      "source": "RI - RA (OS)_curr+RI - RA (IBNR)_{p}"
+      "source": "RI - RA (OS)_{p}+RI - RA (IBNR)_{p}",
+      "amended": "2026-10-05 client correction (RI J20 BP -> BR): the opening risk adjustment uses the opening RA (OS), not the closing one."
      }
     }
    },
@@ -1289,9 +1303,9 @@
     "buckets": {
      "Loss_Recovery_Component": {
       "sign": "+",
-      "tier": "O",
-      "source": null,
-      "override_key": "ri_loss_recovery_new_onerous"
+      "tier": "D",
+      "source": "RI_LC_New",
+      "amended": "2026-10-05 client revision (RI F34 -> 'IFRS Summary'!DC1): Loss Recovery Component for new onerous contracts, computed instead of a manual override."
      }
     }
    },
@@ -1313,9 +1327,10 @@
     "buckets": {
      "Loss_Recovery_Component": {
       "sign": "-",
-      "tier": "O",
-      "source": null,
-      "override_key": "ri_loss_recovery_reversal_amortization"
+      "tier": "D",
+      "source": "RI_LC_Change",
+      "amended": "2026-10-05 client revision (RI F36 -> 'IFRS Summary'!DD1): reversal of the Loss Recovery Component for existing cohorts, computed instead of a manual override. Stored signed.",
+      "apply_sign": false
      }
     }
    },

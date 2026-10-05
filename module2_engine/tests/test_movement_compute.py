@@ -163,9 +163,9 @@ def test_override_frame_fills_ri_manual_line():
     """A tier-O line resolves from the MovementOverride frame (via __ovr__<key>),
     not the default 0."""
     ovr = pd.DataFrame([{"RESERVINGCLASS": "TEST", "UWY": 2023,
-                         "ri_loss_recovery_new_onerous": 500.0}])
+                         "ri_loss_recovery_assumption_change": 500.0}])
     ri = C.build_sama_movement(_frames([_base_row()]), overrides=ovr).pairs[0].sheets["RI"]
-    lid = "loss_recovery_component_for_new_underlying_onerous_contracts"
+    lid = "change_in_lrc_due_to_changes_in_assumptions_for_underlying_onerous_contracts"
     assert ri.line_values[lid]["Loss_Recovery_Component"] == 500.0
     # without the override the same line is 0
     ri0 = C.build_sama_movement(_frames([_base_row()])).pairs[0].sheets["RI"]

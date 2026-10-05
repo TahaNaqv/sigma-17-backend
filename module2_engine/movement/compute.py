@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .mapping import TIER_OVERRIDE, _load as _load_mapping
+from .mapping import RETIRED_OVERRIDE_KEYS, TIER_OVERRIDE, _load as _load_mapping
 from .schema import (
     CLOSING_CASHFLOW_SIGN,
     PL_PRESENTATION_NEGATED,
@@ -222,7 +222,16 @@ def build_sama_movement(frames, *, classes=None, uwys=None, overrides=None) -> M
     if lc is not None:
         ifrs = ifrs.merge(lc, on=["RESERVINGCLASS", "UWY"], how="left", suffixes=("", "_lc"))
     ifrs["UWY"] = ifrs["UWY"].astype(int)
+    result = MovementResult(warnings=list(getattr(frames, "warnings", ()) or ()))
     if overrides is not None and len(overrides):
+        for key, replacement in RETIRED_OVERRIDE_KEYS.items():
+            if key in overrides.columns:
+                used = pd.to_numeric(overrides[key], errors="coerce").fillna(0.0) != 0
+                if used.any():
+                    result.warnings.append(
+                        f"Override '{key}' has {int(used.sum())} non-zero row(s) that were "
+                        f"ignored: this line is now computed from {replacement}."
+                    )
         ovr = overrides.copy()
         ovr["UWY"] = ovr["UWY"].astype(int)
         ovr = ovr.rename(columns={c: _OVERRIDE_COL.format(key=c)
@@ -236,7 +245,6 @@ def build_sama_movement(frames, *, classes=None, uwys=None, overrides=None) -> M
         ifrs = ifrs.merge(cy_py, on=["RESERVINGCLASS", "UWY"], how="left", suffixes=("", "_cypy"))
     columns = set(map(str, ifrs.columns))
     mapping = _load_mapping()
-    result = MovementResult()
 
     pairs = ifrs[["RESERVINGCLASS", "UWY"]].drop_duplicates()
     if classes is not None:
