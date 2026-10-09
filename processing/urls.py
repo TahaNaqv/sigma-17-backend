@@ -25,6 +25,15 @@ urlpatterns = [
     path("module1/jobs/<uuid:pk>/output/rows/", views.Module1JobOutputRowsView.as_view()),
     path("module1/jobs/<uuid:pk>/triangles/", views.Module1TrianglesView.as_view()),
     path("module1/jobs/<uuid:pk>/large-claims/", views.Module1LargeClaimsView.as_view()),
+    path("module1/jobs/<uuid:pk>/data-checks/", views.Module1DataChecksView.as_view()),
+    path(
+        "module1/jobs/<uuid:pk>/data-checks/export/",
+        views.Module1DataChecksExportView.as_view(),
+    ),
+    path(
+        "module1/jobs/<uuid:pk>/data-checks/<str:check_id>/explanation/",
+        views.Module1DataCheckExplanationView.as_view(),
+    ),
     path(
         "module1/jobs/<uuid:pk>/reserve-workbooks/",
         views.Module1ReserveWorkbooksView.as_view(),

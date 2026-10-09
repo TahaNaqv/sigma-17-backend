@@ -179,15 +179,17 @@ class PreflightBlocked(Exception):
 
 
 def _read_engine_inputs(job: Module1Job):
-    """Load the three staged input folders as frames, for pre-flight only.
+    """Load the three staged input folders as frames, for pre-flight and data checks only.
 
     Reads the same files the engine will read, AFTER dataset snapshots have been materialised,
-    so the check sees exactly what the run will see. Pre-flight is a read; the engine loads its
-    own frames independently and is not handed these.
+    so the checks see exactly what the run will see. A read; the engine loads its own frames
+    independently and is not handed these. Each row carries its source file and Excel row
+    number, so a discrepancy can be traced back to the input.
     """
     import pandas as pd
 
     from core.excel import READ_ENGINE
+    from processing.services.data_checks import SOURCE_FILE, SOURCE_ROW
 
     def _load(kind: str):
         folder = job_input_subdir(job, kind)
@@ -196,30 +198,71 @@ def _read_engine_inputs(job: Module1Job):
             if path.name.startswith("~$"):
                 continue
             try:
-                frames.append(pd.read_excel(path, engine=READ_ENGINE))
+                frame = pd.read_excel(path, engine=READ_ENGINE)
             except Exception:
                 logger.warning("preflight.unreadable", extra={"file": path.name})
+                continue
+            frame[SOURCE_FILE] = path.name
+            frame[SOURCE_ROW] = frame.index + 2  # header is Excel row 1
+            frames.append(frame)
         return pd.concat(frames, ignore_index=True) if frames else None
 
     return _load("premium"), _load("claims_paid"), _load("claims_os")
 
 
-def _run_preflight(job: Module1Job, aliases: dict[str, str]):
+def _aliased_engine_inputs(job: Module1Job, aliases: dict[str, str]):
+    """The staged inputs, with class aliases applied — the vocabulary the engine will see.
+
+    Reconciling the POST-alias vocabulary matters: otherwise an alias that fixes the data would
+    still be reported as an error and the gate would block a correct run.
+    """
+    from module1_engine.engine import apply_class_aliases
+
+    return tuple(apply_class_aliases(f, aliases) for f in _read_engine_inputs(job))
+
+
+def _run_data_checks(job: Module1Job, frames, out_dir: Path) -> None:
+    """Run the client's data checklist over the staged inputs and record it on the job.
+
+    Informational, never a gate, and never a reason for the run to fail: if the checks
+    themselves break, the error is recorded in their place and the reserve still runs. The
+    evidence workbook goes into the output so it is previewed and retained with the run.
+    """
+    from processing.services.data_checks import run_data_checks
+    from processing.services.data_checks_store import DATA_CHECKS_FILENAME, previous_baseline
+    from processing.services.data_checks_workbook import build_data_checks_workbook
+
+    try:
+        baseline = previous_baseline(
+            job.organization, before=job.created_at, exclude_job_id=job.pk
+        )
+        report = run_data_checks(
+            *frames,
+            valuation_date=(job.input_meta or {}).get("eop"),
+            baseline=baseline,
+        )
+        (out_dir / DATA_CHECKS_FILENAME).write_bytes(build_data_checks_workbook(report))
+        payload = report.as_dict()
+    except Exception as exc:  # noqa: BLE001 — reporting must not take the reserve down
+        logger.exception("data_checks.failed", extra=_log_extra(job))
+        payload = {"version": 1, "error": f"Data checks could not be run: {exc}"}
+    job.refresh_from_db(fields=["input_meta"])
+    meta = job.input_meta or {}
+    meta["data_checks"] = payload
+    job.input_meta = meta
+    job.save(update_fields=["input_meta"])
+
+
+def _run_preflight(job: Module1Job, aliases: dict[str, str], frames=None):
     """Reconcile the staged inputs and decide whether the run may proceed.
 
     The report is persisted on EVERY run, not only on failure: which classes reconciled is part
-    of the audit record for a reserve, not merely an error path.
+    of the audit record for a reserve, not merely an error path. ``frames`` are the aliased
+    staged inputs when the caller has already read them.
     """
     from processing.services.preflight import build_preflight_report
-    from module1_engine.engine import apply_class_aliases
 
-    premium, paid, os_frame = _read_engine_inputs(job)
-    # Reconcile the POST-alias vocabulary — otherwise an alias that fixes the data would still
-    # be reported as an error and the gate would block a correct run.
-    premium = apply_class_aliases(premium, aliases)
-    paid = apply_class_aliases(paid, aliases)
-    os_frame = apply_class_aliases(os_frame, aliases)
-
+    premium, paid, os_frame = frames if frames is not None else _aliased_engine_inputs(job, aliases)
     report = build_preflight_report(premium, paid, os_frame)
 
     mode = getattr(job.organization, "preflight_mode", "strict") if job.organization else "strict"
@@ -555,7 +598,11 @@ def run_module1_summary_task(self, job_id: str) -> None:
         aliases = (job.input_meta or {}).get("class_aliases")
         if aliases is None:
             aliases = alias_map_for(job.organization)
-        _run_preflight(job, aliases or {})
+        frames = _aliased_engine_inputs(job, aliases or {})
+        # Data checks first, so their report is on the job even when the gate below blocks.
+        _run_data_checks(job, frames, out_dir)
+        _run_preflight(job, aliases or {}, frames)
+        del frames
 
         run_report: dict = {}
         run_generate_summary(

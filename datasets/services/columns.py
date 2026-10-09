@@ -12,6 +12,8 @@ from ..models import Dataset
 # row models; values mirror what `engine.py` looks up in `df.columns`.
 PREMIUM_DB_TO_EXCEL = {
     "policy_number": "POLICYNUMBER",
+    "endorsement_number": "ENDORSEMENTNUMBER",
+    "ifrs_class": "IFRSCLASS",
     "policy_start_date": "POLICYSTARTDATE",
     "policy_end_date": "POLICYENDDATE",
     "risk_start_date": "RiskStartDate",

@@ -228,3 +228,41 @@ class JobDraft(models.Model):
 
     def __str__(self):
         return f"JobDraft {self.key} u={self.user_id} org={self.organization_id}"
+
+
+class DataCheckExplanation(models.Model):
+    """The company's explanation for one data-check result of one reserving run.
+
+    The client's valuation report lists each discrepancy followed by the company's reason
+    ("endorsements issued after expiry are valid, so no adjustment was made"). The reason is
+    entered after the run, so it lives here rather than in the immutable run record, with who
+    wrote it and when. One row per (job, check); an empty explanation deletes the row.
+    """
+
+    job = models.ForeignKey(
+        Module1Job,
+        on_delete=models.CASCADE,
+        related_name="data_check_explanations",
+    )
+    check_id = models.CharField(max_length=16)
+    text = models.TextField()
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "check_id"],
+                name="uniq_data_check_explanation_job_check",
+            ),
+        ]
+
+    def __str__(self):
+        return f"DataCheckExplanation {self.check_id} job={self.job_id}"

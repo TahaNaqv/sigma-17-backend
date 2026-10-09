@@ -3219,16 +3219,21 @@ class Module1PreflightView(APIView):
 
         org = get_request_org(request)
 
+        from processing.services.data_checks import SOURCE_FILE, SOURCE_ROW
+
         def _frames_for(field: str, dataset_field: str):
             uploads = request.FILES.getlist(field)
             frames = []
             for upload in uploads:
                 try:
-                    frames.append(pd.read_excel(upload, engine=READ_ENGINE))
+                    frame = pd.read_excel(upload, engine=READ_ENGINE)
                 except Exception as exc:
                     raise ValidationError(
                         {field: f"Could not read '{upload.name}': {exc}"}
                     ) from exc
+                frame[SOURCE_FILE] = upload.name
+                frame[SOURCE_ROW] = frame.index + 2  # header is Excel row 1
+                frames.append(frame)
             raw_ids = (request.POST.get(dataset_field) or "").strip()
             if raw_ids:
                 ids = [i.strip() for i in raw_ids.split(",") if i.strip()]
@@ -3245,11 +3250,10 @@ class Module1PreflightView(APIView):
             )
 
         aliases = alias_map_for(org)
-        report = build_preflight_report(
-            apply_class_aliases(premium, aliases),
-            apply_class_aliases(paid, aliases),
-            apply_class_aliases(os_frame, aliases),
-        )
+        premium = apply_class_aliases(premium, aliases)
+        paid = apply_class_aliases(paid, aliases)
+        os_frame = apply_class_aliases(os_frame, aliases)
+        report = build_preflight_report(premium, paid, os_frame)
         mode = getattr(org, "preflight_mode", "strict") if org else "strict"
         return Response(
             {
@@ -3258,6 +3262,11 @@ class Module1PreflightView(APIView):
                 "aliases_applied": aliases,
                 # What the gate WILL do, so the UI does not have to re-derive the rule.
                 "would_block": report.blocking and mode != "permissive",
+                # The client's data checklist, shown before the run. Same function the run
+                # records; informational only, never part of would_block.
+                "data_checks": _preview_data_checks(
+                    org, premium, paid, os_frame, (request.POST.get("eop") or "").strip()
+                ),
             }
         )
 
@@ -3270,13 +3279,35 @@ def _dataset_frames(org, dataset_ids):
     """
     from datasets.models import Dataset
     from datasets.services.engine_adapter import dataset_to_dataframe
+    from processing.services.data_checks import SOURCE_FILE, SOURCE_ROW
 
     frames = []
     for dataset in Dataset.objects.filter(id__in=dataset_ids, organization=org):
         frame = dataset_to_dataframe(dataset)
         if frame is not None and len(frame):
+            frame[SOURCE_FILE] = f"dataset: {dataset.name}"
+            frame[SOURCE_ROW] = frame.index + 1
             frames.append(frame)
     return frames
+
+
+def _preview_data_checks(org, premium, paid, os_frame, eop: str) -> dict:
+    """The data-checks report for not-yet-submitted inputs, or an error block. Never raises:
+    a reporting problem must not stop the user from seeing the pre-flight gate."""
+    import logging
+
+    from processing.services.data_checks import run_data_checks
+    from processing.services.data_checks_store import previous_baseline
+
+    try:
+        return run_data_checks(
+            premium, paid, os_frame,
+            valuation_date=eop or None,
+            baseline=previous_baseline(org),
+        ).as_dict()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).exception("data_checks.preview_failed")
+        return {"version": 1, "error": f"Data checks could not be run: {exc}"}
 
 
 class Module1LargeClaimsView(APIView):
@@ -3410,3 +3441,119 @@ def _os_source_frame(job: Module1Job):
     if folder.is_dir() and any(folder.glob("*.xlsx")):
         return import_data(str(folder), "AMOUNTOUTSTANDING", is_os=True)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Data checks (client checklist, Table A.6) — read, explain, export
+# ---------------------------------------------------------------------------
+
+#: Longest explanation accepted; a paragraph, not a document.
+DATA_CHECK_EXPLANATION_MAX = 4000
+
+
+def _summary_job_with_checks(request, pk) -> tuple[Module1Job, dict]:
+    job = _get_accessible_job(request, pk)
+    if job.job_type != Module1Job.JobType.SUMMARY:
+        raise ValidationError({"detail": "Data checks are available for Reserve Summary jobs."})
+    report = (job.input_meta or {}).get("data_checks")
+    if not report:
+        raise ValidationError({"detail": "This run has no data checks (it predates them)."})
+    return job, report
+
+
+class Module1DataChecksView(APIView):
+    """GET /api/module1/jobs/{pk}/data-checks/
+
+    The run's data-checks report, the company's explanations, and the previous run's
+    explanations (offered to carry forward). ``evidence_file`` names the workbook in the run's
+    output that lists every discrepant record, when the output is still available.
+    """
+
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    def get(self, request, pk):
+        from processing.services.data_checks_store import (
+            DATA_CHECKS_FILENAME,
+            explanations_for,
+            previous_explanations,
+        )
+
+        job, report = _summary_job_with_checks(request, pk)
+        evidence = (
+            DATA_CHECKS_FILENAME
+            if job.output_available and DATA_CHECKS_FILENAME in (job.output_artifacts or [])
+            else None
+        )
+        return Response({
+            "report": report,
+            "explanations": explanations_for(job),
+            "previous_explanations": previous_explanations(job),
+            "evidence_file": evidence,
+        })
+
+
+class Module1DataCheckExplanationView(APIView):
+    """PUT /api/module1/jobs/{pk}/data-checks/{check_id}/explanation/  body: {"text": "..."}
+
+    Record (or, with empty text, remove) the company's explanation for one check of one run.
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), HasPermission(["module1.run"])]
+
+    def put(self, request, pk, check_id):
+        from processing.models import DataCheckExplanation
+        from processing.services.data_checks_store import explanations_for
+
+        job, report = _summary_job_with_checks(request, pk)
+        known = {c.get("id") for c in report.get("checks") or []}
+        if check_id not in known:
+            raise ValidationError({"check_id": f"Unknown check '{check_id}' for this run."})
+        text = request.data.get("text")
+        if text is None or not isinstance(text, str):
+            raise ValidationError({"text": "Provide the explanation as text."})
+        text = text.strip()
+        if len(text) > DATA_CHECK_EXPLANATION_MAX:
+            raise ValidationError(
+                {"text": f"Keep the explanation under {DATA_CHECK_EXPLANATION_MAX} characters."}
+            )
+        if text:
+            DataCheckExplanation.objects.update_or_create(
+                job=job, check_id=check_id,
+                defaults={"text": text, "updated_by": request.user},
+            )
+        else:
+            DataCheckExplanation.objects.filter(job=job, check_id=check_id).delete()
+        return Response({"explanations": explanations_for(job)})
+
+
+class Module1DataChecksExportView(APIView):
+    """GET /api/module1/jobs/{pk}/data-checks/export/
+
+    The data-checks report as the client's tables (A.6 with the company's explanations, A.7,
+    A.8) plus the basis. Built from the stored report, so it is instant and available even
+    after the run's output has been purged; the record-level evidence stays in the run output.
+    """
+
+    permission_classes = [IsAuthenticated, CanReadModule1Job]
+
+    def get(self, request, pk):
+        from django.http import HttpResponse
+
+        from processing.services.data_checks_store import explanations_for
+        from processing.services.data_checks_workbook import build_data_checks_workbook
+
+        job, report = _summary_job_with_checks(request, pk)
+        if report.get("error"):
+            raise ValidationError({"detail": report["error"]})
+        texts = {k: v["text"] for k, v in explanations_for(job).items()}
+        body = build_data_checks_workbook(report, explanations=texts)
+        eop = str((job.input_meta or {}).get("eop") or "").replace("/", "-")
+        response = HttpResponse(
+            body,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="Data_Checks_Report_{eop or job.id}.xlsx"'
+        )
+        return response

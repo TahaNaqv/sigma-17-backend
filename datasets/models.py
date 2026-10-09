@@ -205,6 +205,10 @@ class PremiumRow(_BaseRow):
     """One row of policy/premium data. Maps to the Excel `premium` files."""
 
     policy_number = models.CharField(max_length=64, blank=True)  # POLICYNUMBER
+    # Endorsement indicator (data check 2.12) and the IFRS reconciliation class (2.11).
+    # Optional; the engine does not read them.
+    endorsement_number = models.CharField(max_length=64, blank=True)  # ENDORSEMENTNUMBER
+    ifrs_class = models.CharField(max_length=128, blank=True)  # IFRSCLASS
     policy_start_date = models.DateField(null=True, blank=True)  # POLICYSTARTDATE
     policy_end_date = models.DateField(null=True, blank=True)    # POLICYENDDATE
     risk_start_date = models.DateField(null=True, blank=True)    # RiskStartDate

@@ -127,6 +127,8 @@ class PremiumRowSerializer(_RowBaseSerializer):
         model = PremiumRow
         fields = _RowBaseSerializer.Meta.fields + (
             "policy_number",
+            "endorsement_number",
+            "ifrs_class",
             "policy_start_date",
             "policy_end_date",
             "risk_start_date",
